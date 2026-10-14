@@ -1,0 +1,11 @@
+[package]
+name = "appdepot-types"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Shared types and data structures for AppDepot"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

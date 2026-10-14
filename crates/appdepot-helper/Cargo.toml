@@ -1,0 +1,18 @@
+[package]
+name = "appdepot-helper"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Privileged helper for authorized root operations via Polkit"
+
+[[bin]]
+name = "appdepot-helper"
+path = "src/main.rs"
+
+[dependencies]
+appdepot-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

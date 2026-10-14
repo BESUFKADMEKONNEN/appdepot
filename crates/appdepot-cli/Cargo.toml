@@ -1,0 +1,21 @@
+[package]
+name = "appdepot-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "depot: The command-line interface for AppDepot"
+
+[[bin]]
+name = "depot"
+path = "src/main.rs"
+
+[dependencies]
+appdepot-core = { workspace = true }
+appdepot-types = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
