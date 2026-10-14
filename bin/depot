@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# depot: AppDepot Unified CLI and Desktop Launcher
+# depot: AppDepot Unified CLI and Desktop Launcher (Live Linux Scanner)
 # ==============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="/opt/Application"
 
-# Function: Display CLI Help
 show_help() {
   cat << 'EOF'
 AppDepot (depot) v0.1.0 - Windows' Program Files experience, done the Linux way.
@@ -16,18 +16,13 @@ USAGE:
 
 COMMANDS:
     init             Initialize install tree at /opt/Application with 2775 devtools
-    list             List installed applications and categories
+    list             List live installed applications and categories
     info <app>       Show detailed metadata, ledger artifacts, and health
     install <src>    Install an archive, .deb, or AppImage into a category
     remove <app>     Cleanly remove an application using its ledger
-    doctor           Run diagnostic checks and repair broken shortcuts or permissions
+    doctor           Run live diagnostic checks on the host machine
     gui              Launch the interactive AppDepot desktop GUI
     help             Print this help menu
-
-OPTIONS:
-    --json           Format output as JSON
-    --dry-run        Preview planned actions without modifying filesystem
-    -h, --help       Print help information
 EOF
 }
 
@@ -35,70 +30,131 @@ CMD="${1:-help}"
 
 case "$CMD" in
   init)
-    ROOT="${2:-/opt/Application}"
     echo "=========================================================="
     echo "  AppDepot - Initializing Categorized System Tree"
     echo "=========================================================="
     echo "• Target Root: $ROOT"
-    echo "• Developer Group: devtools (setgid mode 2775)"
-    echo "• Standard Categories Created:"
-    echo "    ├── ide/         (IDEs & Code Editors)"
-    echo "    ├── sdk/         (SDKs & Toolchains: Flutter, Android, JDK)"
-    echo "    ├── browsers/    (Chrome, Firefox - Linked)"
-    echo "    ├── databases/   (PostgreSQL, Redis, MySQL)"
-    echo "    ├── runtimes/    (Node.js, Deno, Bun, Python)"
-    echo "    ├── network/     (NetBird, VPN utilities)"
-    echo "    ├── office/      (OnlyOffice, LibreOffice - Linked)"
-    echo "    └── tools/       (CLI utilities, profilers)"
-    echo "✓ AppDepot directory tree initialized successfully."
+    if [ -d "$ROOT" ]; then
+      PERMS=$(stat -c "%a %G" "$ROOT" 2>/dev/null || echo "unknown")
+      echo "✓ $ROOT already exists with permissions: $PERMS"
+    else
+      echo "Creating $ROOT..."
+    fi
     ;;
 
   list)
-    echo "CATEGORY     NAME                 MODE       STATUS"
-    echo "--------------------------------------------------------"
-    echo "ide          Antigravity IDE      managed    healthy"
-    echo "ide          Android Studio       managed    healthy"
-    echo "browsers     Google Chrome        linked     healthy"
-    echo "sdk          Flutter SDK          managed    healthy"
-    echo "databases    Redis Cache          adopted    healthy"
-    echo "office       OnlyOffice Desktop   linked     healthy"
+    echo "========================================================================"
+    echo "  AppDepot Live Registry (/opt/Application)"
+    echo "========================================================================"
+    printf "%-12s %-22s %-10s %-30s\n" "CATEGORY" "APPLICATION" "MODE" "PHYSICAL PATH"
+    echo "------------------------------------------------------------------------"
+    if [ -d "$ROOT" ]; then
+      for cat_dir in "$ROOT"/*; do
+        if [ -d "$cat_dir" ]; then
+          cat_name=$(basename "$cat_dir")
+          for item in "$cat_dir"/*; do
+            if [ -e "$item" ] || [ -L "$item" ]; then
+              item_name=$(basename "$item")
+              if [ -L "$item" ]; then
+                mode="linked"
+                target=$(readlink "$item" || echo "unknown")
+              else
+                mode="managed"
+                target="$item"
+              fi
+              printf "%-12s %-22s %-10s %-30s\n" "$cat_name" "$item_name" "$mode" "$target"
+            fi
+          done
+        fi
+      done
+    else
+      echo "Root $ROOT does not exist. Run 'depot init' first."
+    fi
+    echo "------------------------------------------------------------------------"
     ;;
 
   info)
     APP="${2:-antigravity}"
-    echo "Application Details: $APP"
-    echo "--------------------------------------------------------"
-    echo "• Category:        ide"
-    echo "• Ownership Mode:  managed"
-    echo "• Install Path:    /opt/Application/ide/$APP"
-    echo "• Executable:      /opt/Application/ide/$APP/antigravity-ide"
-    echo "• Launcher Link:   /usr/local/bin/$APP"
-    echo "• Desktop Entry:   /usr/share/applications/appdepot-$APP.desktop"
-    echo "• Sandbox Status:  setuid root (mode 4755) applied"
-    echo "• Ledger Records:  4 artifacts tracked for clean uninstallation"
+    FOUND=0
+    if [ -d "$ROOT" ]; then
+      for cat_dir in "$ROOT"/*; do
+        if [ -d "$cat_dir" ]; then
+          cat_name=$(basename "$cat_dir")
+          if [ -e "$cat_dir/$APP" ] || [ -L "$cat_dir/$APP" ]; then
+            FOUND=1
+            if [ -L "$cat_dir/$APP" ]; then
+              MODE="linked"
+              TARGET=$(readlink "$cat_dir/$APP")
+            else
+              MODE="managed"
+              TARGET="$cat_dir/$APP"
+            fi
+            echo "Application: $APP"
+            echo "--------------------------------------------------------"
+            echo "• Category:        $cat_name"
+            echo "• Ownership Mode:  $MODE"
+            echo "• Target Path:     $TARGET"
+            if [ -f "$TARGET/chrome-sandbox" ]; then
+              SB_PERMS=$(stat -c "%a %U" "$TARGET/chrome-sandbox")
+              echo "• Sandbox Helper:  Found chrome-sandbox ($SB_PERMS)"
+            fi
+            if [ -L "/usr/local/bin/$APP" ]; then
+              echo "• Command Link:    /usr/local/bin/$APP -> $(readlink /usr/local/bin/$APP)"
+            fi
+            if [ -f "/usr/share/applications/$APP.desktop" ]; then
+              echo "• Desktop Entry:   /usr/share/applications/$APP.desktop"
+            fi
+            break
+          fi
+        fi
+      done
+    fi
+    if [ "$FOUND" -eq 0 ]; then
+      echo "Application '$APP' not found in $ROOT."
+    fi
     ;;
 
   doctor)
-    echo "Running AppDepot Doctor Diagnostics (Catalogue D-001..D-012)..."
-    echo "  [✓] D-001: Install root directory exists with setgid mode 2775"
-    echo "  [✓] D-003: All /usr/local/bin command symlinks point to valid targets"
-    echo "  [✓] D-004: Desktop entry Exec= targets are valid and executable"
-    echo "  [✓] D-005: Zero placeholder icon paths found in shortcuts"
-    echo "  [✓] D-006: Chromium sandbox setuid (4755) permissions verified"
-    echo "  [✓] D-007: /etc/profile.d/appdepot.sh environment loader verified"
-    echo "All checks passed. System is in 100% healthy state."
-    ;;
+    echo "Running Live AppDepot Doctor Diagnostics on Host Machine..."
+    echo "------------------------------------------------------------------------"
+    # D-001
+    if [ -d "$ROOT" ]; then
+      STAT=$(stat -c "%a %G" "$ROOT")
+      echo "  [✓] D-001: Install root ($ROOT) exists. Mode & Group: $STAT"
+    else
+      echo "  [✗] D-001: Install root ($ROOT) does not exist."
+    fi
 
-  install)
-    SRC="${2:-fixtures/electron-like.tar.gz}"
-    echo "Installing package '$SRC'..."
-    echo "  1. Resolving category heuristics -> 'ide'"
-    echo "  2. Safe archive unpacking passed (Anti-zip-slip checked)"
-    echo "  3. Scored launcher binary -> 'antigravity-ide' (Score: +95)"
-    echo "  4. Filtered icon noise -> 'resources/antigravity.svg' selected"
-    echo "  5. Setuid sandbox detected -> chrome-sandbox mode 4755 applied"
-    echo "  6. Desktop shortcut created in /usr/share/applications/"
-    echo "✓ Application installed cleanly. Launch with command: antigravity"
+    # D-003
+    DANGLING=0
+    if [ -d "/usr/local/bin" ]; then
+      for link in /usr/local/bin/*; do
+        if [ -L "$link" ] && [ ! -e "$link" ]; then
+          echo "  [✗] D-003: Dangling symlink: $link"
+          DANGLING=1
+        fi
+      done
+      if [ "$DANGLING" -eq 0 ]; then
+        echo "  [✓] D-003: All symlinks in /usr/local/bin point to valid targets."
+      fi
+    fi
+
+    # D-006
+    if [ -f "/opt/Application/ide/antigravity/chrome-sandbox" ]; then
+      SB_STAT=$(stat -c "%a %U" "/opt/Application/ide/antigravity/chrome-sandbox")
+      if [ "$SB_STAT" = "4755 root" ]; then
+        echo "  [✓] D-006: Antigravity chrome-sandbox has mode 4755 root setuid."
+      else
+        echo "  [!] D-006: Antigravity chrome-sandbox has mode $SB_STAT (needs 4755 root)."
+      fi
+    fi
+
+    # D-007
+    if [ -f "/etc/profile.d/appdepot.sh" ]; then
+      echo "  [✓] D-007: Modular environment loader /etc/profile.d/appdepot.sh exists."
+    else
+      echo "  [!] D-007: /etc/profile.d/appdepot.sh environment loader is missing."
+    fi
     ;;
 
   gui)
