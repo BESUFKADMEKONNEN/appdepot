@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# depot: AppDepot Unified CLI and Desktop Launcher (Live Linux Scanner)
+# depot: AppDepot Unified CLI and Desktop Launcher (Native Rust + Live Scanner)
 # ==============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="/opt/Application"
+NATIVE_BIN="$SCRIPT_DIR/target/debug/depot"
+
+CMD="${1:-help}"
+
+# If native Rust binary exists and is executable, delegate to it for CLI commands
+if [ -x "$NATIVE_BIN" ] && [ "$CMD" != "gui" ]; then
+  exec "$NATIVE_BIN" "$@"
+fi
+
+if [ "$CMD" = "gui" ]; then
+  echo "Launching AppDepot Desktop GUI..."
+  exec "$SCRIPT_DIR/start.sh"
+fi
 
 show_help() {
   cat << 'EOF'
@@ -25,8 +38,6 @@ COMMANDS:
     help             Print this help menu
 EOF
 }
-
-CMD="${1:-help}"
 
 case "$CMD" in
   init)
@@ -155,11 +166,6 @@ case "$CMD" in
     else
       echo "  [!] D-007: /etc/profile.d/appdepot.sh environment loader is missing."
     fi
-    ;;
-
-  gui)
-    echo "Launching AppDepot Desktop GUI..."
-    exec "$SCRIPT_DIR/start.sh"
     ;;
 
   help|--help|-h)
