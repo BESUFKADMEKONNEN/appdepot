@@ -25,6 +25,11 @@ import {
   Info,
   X,
   UploadCloud,
+  ArrowRight,
+  Power,
+  RotateCw,
+  Trash2,
+  Copy,
 } from 'lucide-react';
 
 interface AppItem {
@@ -38,6 +43,25 @@ interface AppItem {
   artifactsCount: number;
   status: 'healthy' | 'warning' | 'broken';
   hasSandboxFix?: boolean;
+}
+
+interface UnorganizedItem {
+  id: string;
+  name: string;
+  path: string;
+  detectedOwner: string;
+  suggestedCategory: string;
+  mode: 'managed' | 'linked' | 'adopted';
+}
+
+interface ServiceItem {
+  id: string;
+  name: string;
+  unit: string;
+  status: 'active' | 'inactive';
+  port: number;
+  memoryMb: number;
+  autostart: boolean;
 }
 
 const INITIAL_APPS: AppItem[] = [
@@ -110,6 +134,46 @@ const INITIAL_APPS: AppItem[] = [
   },
 ];
 
+const INITIAL_UNORGANIZED: UnorganizedItem[] = [
+  {
+    id: 'vlc',
+    name: 'VLC Media Player',
+    path: '/usr/bin/vlc',
+    detectedOwner: 'dpkg: vlc-bin (apt)',
+    suggestedCategory: 'tools',
+    mode: 'adopted',
+  },
+  {
+    id: 'postman',
+    name: 'Postman API Client',
+    path: '/home/besu/Downloads/Postman-linux-x64.tar.gz',
+    detectedOwner: 'standalone tarball',
+    suggestedCategory: 'tools',
+    mode: 'managed',
+  },
+];
+
+const INITIAL_SERVICES: ServiceItem[] = [
+  {
+    id: 'redis',
+    name: 'Redis Server',
+    unit: 'redis-server.service',
+    status: 'active',
+    port: 6379,
+    memoryMb: 14.8,
+    autostart: true,
+  },
+  {
+    id: 'postgres',
+    name: 'PostgreSQL Cluster',
+    unit: 'postgresql.service',
+    status: 'inactive',
+    port: 5432,
+    memoryMb: 0,
+    autostart: false,
+  },
+];
+
 const CATEGORIES = [
   { id: 'all', label: 'All Applications', icon: Layers },
   { id: 'ide', label: 'IDEs & Editors', icon: Code2 },
@@ -124,18 +188,28 @@ const CATEGORIES = [
 
 export function App() {
   const [apps, setApps] = useState<AppItem[]>(INITIAL_APPS);
+  const [unorganized, setUnorganized] = useState<UnorganizedItem[]>(INITIAL_UNORGANIZED);
+  const [services, setServices] = useState<ServiceItem[]>(INITIAL_SERVICES);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedApp, setSelectedApp] = useState<AppItem | null>(apps[0]);
+  const [selectedApp, setSelectedApp] = useState<AppItem | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'library' | 'unorganized' | 'stacks' | 'services' | 'doctor'>('library');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
+  const [doctorFixed, setDoctorFixed] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   const [termLines, setTermLines] = useState<Array<{ type: 'cmd' | 'output' | 'success' | 'info'; text: string }>>([
     { type: 'info', text: 'AppDepot Linux Subsystem v0.1.0 (connected)' },
     { type: 'output', text: 'Install root: /opt/Application (mode: 2775 devtools)' },
     { type: 'output', text: 'Type "help", "depot list", or "depot doctor" to interact.' },
   ]);
   const [termInput, setTermInput] = useState('');
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
 
   const filteredApps = apps.filter(app => {
     const matchesCat = selectedCategory === 'all' || app.category === selectedCategory;
@@ -172,7 +246,8 @@ export function App() {
       newLines.push({ type: 'success', text: '[✓] D-003: Symlinks in /usr/local/bin verified healthy' });
       newLines.push({ type: 'success', text: '[✓] D-005: Zero placeholder icon paths found in shortcuts' });
       newLines.push({ type: 'success', text: '[✓] D-006: Chromium sandbox setuid (4755) root verified' });
-      newLines.push({ type: 'info', text: 'All 6 diagnostic checks passed successfully.' });
+      newLines.push({ type: 'info', text: 'All diagnostic checks passed. System score: 100%.' });
+      setDoctorFixed(true);
     } else if (cleanCmd.startsWith('depot info')) {
       const target = cleanCmd.split(' ')[2] || 'antigravity';
       const found = apps.find(a => a.id === target || a.command === target);
@@ -183,12 +258,13 @@ export function App() {
       } else {
         newLines.push({ type: 'output', text: `Application "${target}" not found in registry.` });
       }
-    } else if (cleanCmd.startsWith('depot install')) {
-      newLines.push({ type: 'info', text: 'Executing 9-stage transactional install pipeline...' });
-      newLines.push({ type: 'output', text: 'Stage 1-3: Verified SHA-256 and unpacked staging directory.' });
-      newLines.push({ type: 'output', text: 'Stage 4: Heuristics scored ELF binary (+50) and SVG icon (+50).' });
-      newLines.push({ type: 'success', text: 'Stage 5: Created .desktop shortcut & /usr/local/bin symlink.' });
-      newLines.push({ type: 'success', text: '✓ Installation completed cleanly.' });
+    } else if (cleanCmd.startsWith('depot remove')) {
+      const target = cleanCmd.split(' ')[2];
+      newLines.push({ type: 'info', text: `Consulting SQLite ledger for artifacts belonging to ${target}...` });
+      newLines.push({ type: 'output', text: `✓ Removed desktop shortcut /usr/share/applications/appdepot-${target}.desktop` });
+      newLines.push({ type: 'output', text: `✓ Removed command link /usr/local/bin/${target}` });
+      newLines.push({ type: 'output', text: `✓ Cleaned directory /opt/Application/${target}` });
+      newLines.push({ type: 'success', text: `Package ${target} purged completely. 0 orphaned files remaining.` });
     } else {
       newLines.push({ type: 'output', text: `Executed: ${cleanCmd}` });
     }
@@ -197,9 +273,43 @@ export function App() {
     setTermInput('');
   };
 
+  const adoptUnorganizedApp = (item: UnorganizedItem) => {
+    const adoptedApp: AppItem = {
+      id: item.id,
+      name: item.name,
+      category: item.suggestedCategory,
+      version: 'latest',
+      mode: item.mode,
+      path: item.path,
+      command: item.id,
+      artifactsCount: item.mode === 'linked' ? 2 : 1,
+      status: 'healthy',
+    };
+    setApps([...apps, adoptedApp]);
+    setUnorganized(unorganized.filter(u => u.id !== item.id));
+    showToast(`Adopted ${item.name} into ${item.suggestedCategory}`);
+    runTerminalCommand(`depot adopt --app ${item.id} --category ${item.suggestedCategory}`);
+  };
+
+  const toggleService = (srv: ServiceItem) => {
+    const nextStatus = srv.status === 'active' ? 'inactive' : 'active';
+    const nextMem = nextStatus === 'active' ? 14.5 : 0;
+    setServices(services.map(s => s.id === srv.id ? { ...s, status: nextStatus, memoryMb: nextMem } : s));
+    const action = nextStatus === 'active' ? 'start' : 'stop';
+    showToast(`Service ${srv.name} ${action}ed`);
+    runTerminalCommand(`pkexec appdepot-helper service ${action} ${srv.unit}`);
+  };
+
+  const deleteApp = (app: AppItem) => {
+    setApps(apps.filter(a => a.id !== app.id));
+    setSelectedApp(null);
+    showToast(`Uninstalled ${app.name} cleanly`);
+    runTerminalCommand(`depot remove ${app.id} --yes`);
+  };
+
   const handleInstallWizardFinish = () => {
     const newApp: AppItem = {
-      id: 'demo-app',
+      id: 'custom-package',
       name: 'Custom Package',
       category: 'tools',
       version: '1.0.0',
@@ -218,6 +328,31 @@ export function App() {
 
   return (
     <div className="app-container">
+      {/* Toast */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#232730',
+          border: '1px solid #3daee9',
+          color: '#e6e8ec',
+          padding: '10px 18px',
+          borderRadius: '8px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          zIndex: 200,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '12.5px',
+          fontWeight: 500,
+        }}>
+          <CheckCircle2 size={16} color="#3dd68c" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* Top Header */}
       <header className="header">
         <div className="brand-section">
@@ -240,9 +375,13 @@ export function App() {
         </div>
 
         <div className="header-actions">
-          <div className="health-pill">
+          <div className="health-pill" style={{
+            background: doctorFixed ? 'rgba(61, 214, 140, 0.15)' : 'rgba(245, 181, 74, 0.15)',
+            color: doctorFixed ? '#3dd68c' : '#f5b54a',
+            borderColor: doctorFixed ? 'rgba(61, 214, 140, 0.3)' : 'rgba(245, 181, 74, 0.3)',
+          }}>
             <ShieldCheck size={14} />
-            <span>Health 98%</span>
+            <span>Health {doctorFixed ? '100%' : '92%'}</span>
           </div>
           <button className="primary-btn" onClick={() => setIsWizardOpen(true)}>
             <Plus size={15} />
@@ -275,7 +414,7 @@ export function App() {
                 <AlertTriangle size={15} />
                 <span>Unorganized</span>
               </div>
-              <span className="nav-count">2</span>
+              <span className="nav-count">{unorganized.length}</span>
             </button>
             <button
               className={`nav-item ${activeTab === 'stacks' ? 'active' : ''}`}
@@ -295,7 +434,7 @@ export function App() {
                 <Server size={15} />
                 <span>Services</span>
               </div>
-              <span className="nav-count">2</span>
+              <span className="nav-count">{services.length}</span>
             </button>
             <button
               className={`nav-item ${activeTab === 'doctor' ? 'active' : ''}`}
@@ -305,7 +444,9 @@ export function App() {
                 <Stethoscope size={15} />
                 <span>Doctor Health</span>
               </div>
-              <span className="nav-count">0</span>
+              <span className="nav-count" style={{ color: doctorFixed ? '#3dd68c' : '#f5b54a' }}>
+                {doctorFixed ? '✓' : '1'}
+              </span>
             </button>
           </div>
 
@@ -320,8 +461,11 @@ export function App() {
               return (
                 <button
                   key={cat.id}
-                  className={`nav-item ${selectedCategory === cat.id ? 'active' : ''}`}
-                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`nav-item ${selectedCategory === cat.id && activeTab === 'library' ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedCategory(cat.id);
+                    setActiveTab('library');
+                  }}
                 >
                   <div className="nav-item-left">
                     <Icon size={14} />
@@ -334,92 +478,363 @@ export function App() {
           </div>
         </aside>
 
-        {/* Center Application Library */}
+        {/* Center Content Switcher */}
         <main className="center-content">
-          <div className="view-header">
-            <div className="view-title-wrap">
-              <h1 className="view-title">
-                {CATEGORIES.find(c => c.id === selectedCategory)?.label || 'Applications'}
-              </h1>
-              <span className="view-subtitle">{filteredApps.length} applications in library</span>
-            </div>
-            <div className="action-btn-group">
-              <button
-                className="sm-btn"
-                onClick={() => runTerminalCommand('depot adopt --scan')}
-              >
-                Scan System
-              </button>
-              <button
-                className="sm-btn"
-                onClick={() => runTerminalCommand('depot doctor')}
-              >
-                Run Health Audit
-              </button>
-            </div>
-          </div>
+          {/* VIEW: Library */}
+          {activeTab === 'library' && (
+            <>
+              <div className="view-header">
+                <div className="view-title-wrap">
+                  <h1 className="view-title">
+                    {CATEGORIES.find(c => c.id === selectedCategory)?.label || 'Applications'}
+                  </h1>
+                  <span className="view-subtitle">{filteredApps.length} applications in library</span>
+                </div>
+                <div className="action-btn-group">
+                  <button
+                    className="sm-btn"
+                    onClick={() => runTerminalCommand('depot adopt --scan')}
+                  >
+                    Scan System
+                  </button>
+                  <button
+                    className="sm-btn"
+                    onClick={() => setActiveTab('doctor')}
+                  >
+                    Run Health Audit
+                  </button>
+                </div>
+              </div>
 
-          {/* Cards Grid */}
-          <div className="app-grid">
-            {filteredApps.map(app => (
-              <div
-                key={app.id}
-                className={`app-card ${selectedApp?.id === app.id ? 'selected' : ''}`}
-                onClick={() => setSelectedApp(app)}
-              >
-                <div className="card-top">
-                  <div className="app-icon-mask">
-                    {app.name.charAt(0)}
-                  </div>
-                  <div className="app-meta">
-                    <div className="app-name">{app.name}</div>
-                    <div className="app-version">v{app.version} · {app.command}</div>
-                    <div className="badges-row">
-                      <span className={`mode-badge ${app.mode}`}>{app.mode}</span>
-                      {app.hasSandboxFix && (
-                        <span className="mode-badge" style={{ background: 'rgba(245,181,74,0.15)', color: '#f5b54a' }}>
-                          Sandbox 4755
-                        </span>
-                      )}
+              {/* Cards Grid */}
+              <div className="app-grid">
+                {filteredApps.map(app => (
+                  <div
+                    key={app.id}
+                    className={`app-card ${selectedApp?.id === app.id ? 'selected' : ''}`}
+                    onClick={() => setSelectedApp(app)}
+                  >
+                    <div className="card-top">
+                      <div className="app-icon-mask">
+                        {app.name.charAt(0)}
+                      </div>
+                      <div className="app-meta">
+                        <div className="app-name">{app.name}</div>
+                        <div className="app-version">v{app.version} · {app.command}</div>
+                        <div className="badges-row">
+                          <span className={`mode-badge ${app.mode}`}>{app.mode}</span>
+                          {app.hasSandboxFix && (
+                            <span className="mode-badge" style={{ background: 'rgba(245,181,74,0.15)', color: '#f5b54a' }}>
+                              Sandbox 4755
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="path-preview mono">
+                      {app.path}
+                    </div>
+
+                    <div className="card-footer">
+                      <div className="status-indicator">
+                        <div className="status-dot"></div>
+                        <span>Ledger: {app.artifactsCount} artifacts</span>
+                      </div>
+                      <div className="action-btn-group">
+                        <button
+                          className="sm-btn"
+                          title="Launch app"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            runTerminalCommand(`${app.command} &`);
+                          }}
+                        >
+                          <Play size={11} />
+                        </button>
+                        <button
+                          className="sm-btn"
+                          title="Inspect artifacts"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedApp(app);
+                          }}
+                        >
+                          <Info size={11} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ))}
+              </div>
+            </>
+          )}
 
-                <div className="path-preview mono">
-                  {app.path}
+          {/* VIEW: Unorganized */}
+          {activeTab === 'unorganized' && (
+            <div>
+              <div className="view-header">
+                <div>
+                  <h1 className="view-title">Unorganized System Applications</h1>
+                  <span className="view-subtitle">Applications found on your host machine not yet registered in AppDepot</span>
                 </div>
+                <button className="primary-btn" onClick={() => {
+                  unorganized.forEach(u => adoptUnorganizedApp(u));
+                }}>
+                  Auto-Organize All
+                </button>
+              </div>
 
-                <div className="card-footer">
-                  <div className="status-indicator">
-                    <div className="status-dot"></div>
-                    <span>Ledger: {app.artifactsCount} artifacts</span>
+              {unorganized.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#9aa3b2' }}>
+                  <CheckCircle2 size={48} color="#3dd68c" style={{ margin: '0 auto 12px' }} />
+                  <h3>All System Applications Are Organized!</h3>
+                  <p style={{ fontSize: '12px', marginTop: '6px' }}>Every discovered desktop shortcut is linked into your library.</p>
+                </div>
+              ) : (
+                unorganized.map(item => (
+                  <div key={item.id} className="unorganized-row">
+                    <div className="unorganized-left">
+                      <div className="app-icon-mask" style={{ width: '38px', height: '38px' }}>
+                        {item.name.charAt(0)}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '13.5px' }}>{item.name}</div>
+                        <div style={{ fontSize: '11px', color: '#9aa3b2' }}>{item.detectedOwner} · <span className="mono">{item.path}</span></div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span className="mode-badge" style={{ background: '#242832', color: '#9aa3b2' }}>
+                        Suggested: {item.suggestedCategory}
+                      </span>
+                      <button className="primary-btn" onClick={() => adoptUnorganizedApp(item)}>
+                        <span>Adopt App</span>
+                        <ArrowRight size={13} />
+                      </button>
+                    </div>
                   </div>
-                  <div className="action-btn-group">
-                    <button
-                      className="sm-btn"
-                      title="Launch app"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        runTerminalCommand(`${app.command} &`);
-                      }}
-                    >
-                      <Play size={11} />
+                ))
+              )}
+            </div>
+          )}
+
+          {/* VIEW: Stacks */}
+          {activeTab === 'stacks' && (
+            <div>
+              <div className="view-header">
+                <div>
+                  <h1 className="view-title">Developer Tool Stacks</h1>
+                  <span className="view-subtitle">Install, launch, and manage entire tech stacks as a single unit</span>
+                </div>
+                <button className="sm-btn" onClick={() => runTerminalCommand('depot export -o workstation.toml')}>
+                  Export Workstation Manifest
+                </button>
+              </div>
+
+              <div className="stacks-grid">
+                <div className="stack-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 700, fontSize: '15px' }}>Flutter Mobile</div>
+                    <span className="health-pill">3 / 4 Ready</span>
+                  </div>
+                  <p style={{ fontSize: '12px', color: '#9aa3b2' }}>
+                    Mobile cross-platform development stack with SDK, IDE, and build tools.
+                  </p>
+                  <div className="stack-chips-wrap">
+                    <span className="stack-chip">✓ Flutter SDK</span>
+                    <span className="stack-chip">✓ Android Studio</span>
+                    <span className="stack-chip">✓ Google Chrome</span>
+                    <span className="stack-chip" style={{ color: '#f5b54a' }}>○ cmake & ninja</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                    <button className="primary-btn" style={{ flex: 1 }} onClick={() => runTerminalCommand('depot stack install flutter-mobile')}>
+                      Install Stack
                     </button>
-                    <button
-                      className="sm-btn"
-                      title="Inspect artifacts"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        runTerminalCommand(`depot info ${app.id}`);
-                      }}
-                    >
-                      <Info size={11} />
+                    <button className="sm-btn" onClick={() => runTerminalCommand('depot stack launch flutter-mobile')}>
+                      Launch All
+                    </button>
+                  </div>
+                </div>
+
+                <div className="stack-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 700, fontSize: '15px' }}>Node Backend</div>
+                    <span className="health-pill" style={{ color: '#3dd68c', background: 'rgba(61,214,140,0.15)' }}>4 / 4 Active</span>
+                  </div>
+                  <p style={{ fontSize: '12px', color: '#9aa3b2' }}>
+                    Backend API environment with local caching and relational database services.
+                  </p>
+                  <div className="stack-chips-wrap">
+                    <span className="stack-chip">✓ Node.js LTS</span>
+                    <span className="stack-chip">✓ Redis Server</span>
+                    <span className="stack-chip">✓ PostgreSQL</span>
+                    <span className="stack-chip">✓ Git</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                    <button className="primary-btn" style={{ flex: 1 }} onClick={() => runTerminalCommand('depot stack launch node-backend')}>
+                      Start Services
+                    </button>
+                  </div>
+                </div>
+
+                <div className="stack-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 700, fontSize: '15px' }}>Java Enterprise</div>
+                    <span className="health-pill" style={{ color: '#9aa3b2', background: '#232730' }}>Template</span>
+                  </div>
+                  <p style={{ fontSize: '12px', color: '#9aa3b2' }}>
+                    Enterprise backend stack with OpenJDK 21, Maven, Gradle, and IntelliJ.
+                  </p>
+                  <div className="stack-chips-wrap">
+                    <span className="stack-chip">○ OpenJDK 21</span>
+                    <span className="stack-chip">○ Gradle</span>
+                    <span className="stack-chip">○ Maven</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                    <button className="primary-btn" style={{ flex: 1 }} onClick={() => runTerminalCommand('depot stack install java-enterprise')}>
+                      Install Stack
                     </button>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+
+          {/* VIEW: Services */}
+          {activeTab === 'services' && (
+            <div>
+              <div className="view-header">
+                <div>
+                  <h1 className="view-title">System Services Panel</h1>
+                  <span className="view-subtitle">Start and stop background developer services on-demand to save system RAM</span>
+                </div>
+              </div>
+
+              {services.map(srv => (
+                <div key={srv.id} className="service-row">
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '14px' }}>{srv.name}</span>
+                      <span className={`status-dot`} style={{ background: srv.status === 'active' ? '#3dd68c' : '#6b7280' }}></span>
+                      <span style={{ fontSize: '11px', color: srv.status === 'active' ? '#3dd68c' : '#6b7280', textTransform: 'capitalize' }}>
+                        {srv.status}
+                      </span>
+                    </div>
+                    <div className="service-unit mono">{srv.unit} · Port {srv.port}</div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div className="service-metrics">
+                      <span>Memory: <strong>{srv.memoryMb} MB</strong></span>
+                    </div>
+                    <button
+                      className={srv.status === 'active' ? 'sm-btn' : 'primary-btn'}
+                      style={{ minWidth: '90px' }}
+                      onClick={() => toggleService(srv)}
+                    >
+                      <Power size={12} />
+                      <span>{srv.status === 'active' ? 'Stop' : 'Start'}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* VIEW: Doctor */}
+          {activeTab === 'doctor' && (
+            <div>
+              <div className="doctor-hero">
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ShieldCheck size={24} color={doctorFixed ? '#3dd68c' : '#f5b54a'} />
+                    <h2 style={{ fontSize: '18px', fontWeight: 700 }}>
+                      Diagnostic Health: {doctorFixed ? '100% (Clean)' : '92% (1 Issue Detected)'}
+                    </h2>
+                  </div>
+                  <p style={{ fontSize: '12px', color: '#9aa3b2', marginTop: '4px' }}>
+                    AppDepot Doctor monitors filesystem permissions, symlink integrity, sandbox setuid helpers, and shortcut validity.
+                  </p>
+                </div>
+                {!doctorFixed && (
+                  <button className="primary-btn" onClick={() => runTerminalCommand('depot doctor --fix')}>
+                    <RotateCw size={14} />
+                    <span>Fix All Issues</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="doctor-check-row">
+                <div className="doctor-check-left">
+                  <CheckCircle2 size={16} color="#3dd68c" style={{ marginTop: '2px' }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>D-001: Install Root & Developer Group Permissions</div>
+                    <div style={{ fontSize: '11px', color: '#9aa3b2' }}>/opt/Application exists with ownership root:devtools and setgid mode 2775.</div>
+                  </div>
+                </div>
+                <span className="health-pill">Passed</span>
+              </div>
+
+              <div className="doctor-check-row">
+                <div className="doctor-check-left">
+                  <CheckCircle2 size={16} color="#3dd68c" style={{ marginTop: '2px' }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>D-003: Command Symlink Validation</div>
+                    <div style={{ fontSize: '11px', color: '#9aa3b2' }}>All symlinks in /usr/local/bin point to real, executable binaries.</div>
+                  </div>
+                </div>
+                <span className="health-pill">Passed</span>
+              </div>
+
+              <div className="doctor-check-row" style={{ borderColor: doctorFixed ? 'var(--border)' : 'rgba(245, 181, 74, 0.4)' }}>
+                <div className="doctor-check-left">
+                  {doctorFixed ? (
+                    <CheckCircle2 size={16} color="#3dd68c" style={{ marginTop: '2px' }} />
+                  ) : (
+                    <AlertTriangle size={16} color="#f5b54a" style={{ marginTop: '2px' }} />
+                  )}
+                  <div>
+                    <div style={{ fontWeight: 600 }}>D-005: Placeholder Icon Detection</div>
+                    <div style={{ fontSize: '11px', color: doctorFixed ? '#9aa3b2' : '#f5b54a' }}>
+                      {doctorFixed
+                        ? 'All shortcut icon paths exist on disk. Monogram fallback generated.'
+                        : 'Notice: Legacy shortcut contains placeholder icon path: /path/to/icon.png'}
+                    </div>
+                  </div>
+                </div>
+                {doctorFixed ? (
+                  <span className="health-pill">Repaired</span>
+                ) : (
+                  <button className="sm-btn" onClick={() => runTerminalCommand('depot doctor --fix')}>
+                    Repair Icon
+                  </button>
+                )}
+              </div>
+
+              <div className="doctor-check-row">
+                <div className="doctor-check-left">
+                  <CheckCircle2 size={16} color="#3dd68c" style={{ marginTop: '2px' }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>D-006: Chromium Setuid Sandbox Audit</div>
+                    <div style={{ fontSize: '11px', color: '#9aa3b2' }}>Antigravity chrome-sandbox has ownership root:root and permission mode 4755.</div>
+                  </div>
+                </div>
+                <span className="health-pill">Passed</span>
+              </div>
+
+              <div className="doctor-check-row">
+                <div className="doctor-check-left">
+                  <CheckCircle2 size={16} color="#3dd68c" style={{ marginTop: '2px' }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>D-007: Modular Environment Fragments</div>
+                    <div style={{ fontSize: '11px', color: '#9aa3b2' }}>Loader in /etc/profile.d/appdepot.sh sources individual app fragments cleanly.</div>
+                  </div>
+                </div>
+                <span className="health-pill">Passed</span>
+              </div>
+            </div>
+          )}
         </main>
 
         {/* Right Docked Live Terminal */}
@@ -488,6 +903,115 @@ export function App() {
           </div>
         </aside>
       </div>
+
+      {/* App Detail Inspector Drawer */}
+      {selectedApp && (
+        <div className="detail-drawer">
+          <div className="drawer-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="app-icon-mask" style={{ width: '36px', height: '36px', fontSize: '15px' }}>
+                {selectedApp.name.charAt(0)}
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '14px' }}>{selectedApp.name}</div>
+                <div style={{ fontSize: '11px', color: '#9aa3b2' }}>v{selectedApp.version} · {selectedApp.command}</div>
+              </div>
+            </div>
+            <button onClick={() => setSelectedApp(null)} style={{ color: '#9aa3b2' }}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="drawer-body">
+            <div>
+              <div className="drawer-section-title">Ownership Mode</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className={`mode-badge ${selectedApp.mode}`}>{selectedApp.mode}</span>
+                <span style={{ fontSize: '11.5px', color: '#9aa3b2' }}>
+                  {selectedApp.mode === 'managed' && 'AppDepot controls files, lifecycle, and uninstallation.'}
+                  {selectedApp.mode === 'linked' && 'Files owned by external package manager. Linked without moving.'}
+                  {selectedApp.mode === 'adopted' && 'System shortcut or sandbox application registered virtually.'}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <div className="drawer-section-title">Filesystem Path</div>
+              <div className="path-preview mono" style={{ fontSize: '11.5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{selectedApp.path}</span>
+                <button title="Copy path" onClick={() => {
+                  navigator.clipboard.writeText(selectedApp.path);
+                  showToast('Path copied to clipboard');
+                }}>
+                  <Copy size={12} color="#9aa3b2" />
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="drawer-section-title">Artifacts Ledger (SQLite)</div>
+              <table className="ledger-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Recorded System Path</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>symlink</code></td>
+                    <td className="mono">/usr/local/bin/{selectedApp.command}</td>
+                  </tr>
+                  <tr>
+                    <td><code>desktop</code></td>
+                    <td className="mono">/usr/share/applications/appdepot-{selectedApp.id}.desktop</td>
+                  </tr>
+                  <tr>
+                    <td><code>env</code></td>
+                    <td className="mono">/etc/profile.d/appdepot.d/{selectedApp.id}.sh</td>
+                  </tr>
+                  {selectedApp.hasSandboxFix && (
+                    <tr>
+                      <td><code>sandbox</code></td>
+                      <td className="mono">{selectedApp.path}/chrome-sandbox (4755)</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                className="primary-btn"
+                style={{ justifyContent: 'center' }}
+                onClick={() => runTerminalCommand(`${selectedApp.command} &`)}
+              >
+                <Play size={14} />
+                <span>Launch {selectedApp.name}</span>
+              </button>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="sm-btn"
+                  style={{ flex: 1, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  onClick={() => runTerminalCommand(`depot shortcut repair ${selectedApp.id}`)}
+                >
+                  <RotateCw size={12} />
+                  <span>Repair Shortcut</span>
+                </button>
+                <button
+                  className="sm-btn"
+                  style={{ flex: 1, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px', color: '#ff6b6b' }}
+                  onClick={() => deleteApp(selectedApp)}
+                >
+                  <Trash2 size={12} />
+                  <span>Uninstall</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 4-Step Install Wizard Modal */}
       {isWizardOpen && (
