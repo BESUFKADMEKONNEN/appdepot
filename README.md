@@ -1,83 +1,145 @@
 # AppDepot 📦
 
-> **Windows' "Program Files" experience, done the Linux way:** group, install, organize, and launch every application from one window, with a real terminal sitting beside it.
+> **Windows' "Program Files" & macOS `/Applications` experience, done the Linux way:**
+> Group, install, organize, and launch every Linux application from one unified tree with a docked live terminal and zero hardcoded data.
 
-[![CI](https://github.com/besifkad/appdepot/actions/workflows/ci.yml/badge.svg)](https://github.com/besifkad/appdepot/actions)
+[![CI](https://github.com/besu/appdepot/actions/workflows/ci.yml/badge.svg)](https://github.com/besu/appdepot/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status: Pre-Alpha](https://img.shields.io/badge/Status-Phase_0_Foundations-orange.svg)](#roadmap)
+[![Rust](https://img.shields.io/badge/Rust-1.78%2B-red.svg)](https://www.rust-lang.org/)
+[![GUI](https://img.shields.io/badge/GUI-Tauri_v2_%7C_React_%2B_TS-61dafb.svg)](apps/gui)
+[![Live Inotify](https://img.shields.io/badge/Kernel-Inotify_SSE-brightgreen.svg)](#features)
 
 ---
 
 ## 💡 The Problem
 
-Linux provides world-class package managers (`apt`, `dnf`, `pacman`), yet software arrives from everywhere: tarballs, zips, `.deb` files, Flatpaks, Snaps, AppImages, and git repositories. Each puts files in a different directory, configures PATH inconsistently, creates shortcuts haphazardly (or not at all), and leaves orphaned files behind upon uninstallation.
+On Linux, software arrives from fragmented sources: tarballs, zip archives, `.deb` packages, Flatpaks, Snaps, AppImages, and git repositories. Each tool dumps files in different directories (`/opt`, `~/.local`, `/usr/local`, `/var/lib/flatpak`), creates shortcuts inconsistently, pollutes `$PATH`, and leaves orphaned files behind.
 
-**AppDepot** is a desktop application and command-line tool that brings order to this chaos without replacing your package manager:
-- 📁 **Categorized Library:** Windows-like organization (`ide`, `sdk`, `browsers`, `databases`, `runtimes`, `tools`) under `/opt/Application`.
-- ⚡ **One-Click Safe Install:** Tarballs, zips, AppImages, and `.deb` packages extracted safely with anti-traversal validation, automatic executable scoring, and crisp icon extraction.
-- 💻 **Side-by-Side Live Terminal:** A real PTY docked directly beside the GUI displaying the exact POSIX commands executed on your behalf.
-- 🔗 **Non-Destructive Adoption:** Point at existing `.deb`, Flatpak, or Snap applications without moving files or breaking updates.
-- 📋 **Shareable Manifests:** Describe your workstation in a single declarative `workstation.toml` file and recreate it on clean hardware in seconds.
-- 🛡️ **Zero GUI Root:** Unprivileged GUI communicating with a minimal, typed Polkit helper daemon.
+**AppDepot** brings desktop parity to Linux (similar to Windows `C:\Program Files` or macOS `/Applications`) without replacing your distribution package manager:
+
+* 📁 **Categorized Library:** Structured system hierarchy (`ide/`, `sdk/`, `browsers/`, `databases/`, `runtimes/`, `network/`, `office/`, `tools/`) under `/opt/Application`.
+* ⚡ **Live Inotify Watcher:** Immediate real-time sync via Linux kernel inotify and Server-Sent Events. Dropping a folder or archive into `/opt/Application` immediately updates the GUI with zero manual refresh.
+* 🔍 **Smart Heuristic Pipeline:** Inspects archives, scores candidate executables (+95 ELF binary match), detects Chromium setuid sandboxes (`chrome-sandbox`), and extracts application icons.
+* 💻 **Docked Live Shell:** An integrated terminal running alongside the GUI that executes real system commands, displaying the exact actions performed.
+* 🛡️ **Zero GUI Root:** Unprivileged UI communicating with a minimal, typed Polkit helper daemon.
+* 📋 **Complete Artifacts Ledger:** Tracks every symlink in `~/.local/bin`, XDG shortcut in `~/.local/share/applications`, and directory for 100% clean, one-click uninstallation.
+
+---
+
+## 🚀 Quick Start
+
+### 1. Prerequisites
+* **Linux:** Ubuntu / Debian / Fedora / Arch (tested on Kubuntu 24.04 LTS)
+* **Rust:** 1.78+ (`rustup default stable`)
+* **Node.js:** 18+ & npm
+
+### 2. Run the Native Rust CLI
+```bash
+# Clone the repository
+git clone https://github.com/besu/appdepot.git
+cd appdepot
+
+# Build native Rust workspace
+cargo build --workspace
+
+# Inspect live applications on your machine
+./bin/depot list
+
+# Inspect detailed ledger artifacts for an app
+./bin/depot info antigravity
+
+# Run POSIX system doctor diagnostics
+./bin/depot doctor
+```
+
+### 3. Launch the Desktop GUI
+```bash
+# Run the interactive desktop launcher
+./bin/depot gui
+# (or execute ./start.sh directly)
+```
+Open **http://127.0.0.1:5173/** in your browser or run as a native window via Tauri.
+
+---
+
+## 🎯 Three Ownership Modes
+
+AppDepot manages software without breaking system packages:
+
+| Mode | Target Location | Description | Use Cases |
+| :--- | :--- | :--- | :--- |
+| **Managed** | `/opt/Application/<category>/<app>/` | AppDepot extracts, manages files, sets permissions, and handles lifecycle. | Tarballs, zips, AppImages, custom SDKs (Flutter, Go, Zig). |
+| **Linked** | Symlink to `/opt/<vendor>/` or `/usr/` | Physical files stay untouched; a symlink is registered in the categorized tree. | Vendor packages like Google Chrome, OnlyOffice, PostgreSQL. |
+| **Adopted** | System registry entry | Records external packages, Flatpaks, or Snaps in the artifacts ledger. | System utilities and background systemd services (MySQL). |
 
 ---
 
 ## 🏛️ Architecture Overview
 
-AppDepot is constructed as a modular Rust workspace with a decoupled presentation layer:
+AppDepot is architected as a modular Rust workspace with a decoupled presentation layer:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ PRESENTATION LAYER                                          │
-│   GUI: Tauri v2 + React + TypeScript + xterm.js             │
-│   CLI: `depot` (clap v4)                                    │
-├─────────────────────────────────────────────────────────────┤
-│ APPLICATION LAYER (`appdepot-core`)                         │
-│   Pipeline · Heuristics · Ledger · Doctor · Manifest Engine │
-├─────────────────────────────────────────────────────────────┤
-│ INFRASTRUCTURE LAYER                                        │
-│   SQLite Registry (`rusqlite`) · Safe Extractor · PTY       │
-├─────────────────────────────────────────────────────────────┤
-│ PRIVILEGED LAYER                                            │
-│   `appdepot-helper` (Polkit authorized, typed JSON on stdin)│
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ PRESENTATION LAYER                                                     │
+│   GUI: Tauri v2 + React + TypeScript + xterm.js (apps/gui)             │
+│   CLI: `depot` binary via clap v4 (crates/appdepot-cli)                │
+├────────────────────────────────────────────────────────────────────────┤
+│ APPLICATION ENGINE (`crates/appdepot-core`)                            │
+│   Safe Extractor · Heuristics · Artifacts Ledger · POSIX Doctor        │
+├────────────────────────────────────────────────────────────────────────┤
+│ INFRASTRUCTURE LAYER                                                   │
+│   SQLite Registry (`rusqlite`) · Inotify Watcher · PTY Supervisor      │
+├────────────────────────────────────────────────────────────────────────┤
+│ PRIVILEGED HELPER (`crates/appdepot-helper`)                           │
+│   Polkit-authorized daemon for root actions (chmod 4755 chrome-sandbox)│
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 📚 Documentation Suite
-
-The complete project specification is partitioned into modular guides in [`docs/`](docs/):
-
-1. [**01. Vision & Core Concepts**](docs/01-vision-and-concepts.md): Personas, pain points, ownership modes, and terminology.
-2. [**02. Architecture & Security**](docs/02-architecture-and-security.md): Filesystem layout (`/opt/Application`), Polkit helper, SQLite schema.
-3. [**03. Core Pipeline & Engine**](docs/03-core-pipeline-and-heuristics.md): 9-stage pipeline, scoring heuristics, `.desktop` generators.
-4. [**04. Interfaces & Design System**](docs/04-interfaces-and-design-system.md): CLI reference, GUI layout, PTY terminal, Teach Mode.
-5. [**05. Quality, Packaging & Portfolio**](docs/05-quality-packaging-and-portfolio.md): Test fixtures, Doctor catalogue, packaging, portfolio demo script.
-6. [**06. Implementation Roadmap**](docs/06-implementation-roadmap.md): Milestone progress from Phase 0 to Phase 6.
-
----
-
-## 🛠️ Repository Layout
+## 📦 Repository Structure
 
 ```
+├── Cargo.toml                  # Root Rust workspace definition
+├── bin/
+│   └── depot                   # Main CLI launcher (delegates to native Rust binary)
 ├── crates/
-│   ├── appdepot-core/      # Core engine, heuristics, registry, doctor
-│   ├── appdepot-cli/       # `depot` command-line binary
-│   ├── appdepot-types/     # Shared IPC data structures
-│   ├── appdepot-helper/    # Privileged Polkit root helper
-│   └── appdepot-pty/       # PTY session supervisor
+│   ├── appdepot-types/         # Shared IPC data structures & serializable models
+│   ├── appdepot-core/          # Core engine, heuristics, archive safety, doctor
+│   ├── appdepot-cli/           # Native CLI binary (`depot list|info|install|doctor`)
+│   ├── appdepot-helper/        # Privileged Polkit root helper
+│   └── appdepot-pty/           # PTY process supervisor
 ├── apps/
-│   └── gui/                # Tauri v2 + React desktop application
-├── docs/                   # Architectural guides & ADRs
-└── fixtures/               # Test archives (Electron, SDK, decompression bombs)
+│   └── gui/                    # React + TypeScript + Vite desktop application
+│       ├── server/             # Live Linux inotify scanner & system API middleware
+│       └── src/                # Library view, install wizard, docked terminal
+├── docs/                       # Complete 6-part architecture documentation suite
+│   ├── 01-vision-and-concepts.md
+│   ├── 02-architecture-and-security.md
+│   ├── 03-core-pipeline-and-heuristics.md
+│   ├── 04-interfaces-and-design-system.md
+│   ├── 05-quality-packaging-and-portfolio.md
+│   └── 06-implementation-roadmap.md
+├── fixtures/                   # Synthetic test archives (Electron & SDK fixtures)
+└── start.sh                    # One-command desktop GUI launcher
 ```
+
+---
+
+## 🩺 System Doctor Health Checks
+
+AppDepot comes with built-in POSIX diagnostic audits (`depot doctor`):
+
+* **D-001 (Root Permissions):** Verifies `/opt/Application` exists with `2775` permissions and `devtools` group ownership.
+* **D-003 (Command Symlinks):** Scans `/usr/local/bin` and `~/.local/bin` for broken or dangling symlinks.
+* **D-006 (Setuid Sandbox Audit):** Verifies Chromium-based applications (`chrome-sandbox`) have `4755 root` setuid flags for proper process isolation.
+* **D-007 (Environment Fragments):** Verifies modular `/etc/profile.d/` environment loaders.
 
 ---
 
 ## 📜 Origin Story
 
-AppDepot evolved from a 25-line Bash script created during a Kubuntu workstation setup. Read the full origin story and examine the prototype script in [`docs/history/add-app.sh`](docs/history/add-app.sh).
+AppDepot originated from a 25-line Bash prototype script (`add-app.sh`) written to organize software on Kubuntu workstations. Read the full architectural evolution in [`docs/history/add-app.sh`](docs/history/add-app.sh).
 
 ---
 
