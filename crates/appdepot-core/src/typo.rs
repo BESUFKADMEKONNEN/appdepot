@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 /// Computes the Levenshtein distance between two string slices.
+#[allow(clippy::needless_range_loop)]
 pub fn levenshtein_distance(a: &str, b: &str) -> usize {
     let a_chars: Vec<char> = a.chars().collect();
     let b_chars: Vec<char> = b.chars().collect();
@@ -31,11 +32,12 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
 
     for i in 1..=m {
         for j in 1..=n {
-            let cost = if a_chars[i - 1].to_lowercase().next() == b_chars[j - 1].to_lowercase().next() {
-                0
-            } else {
-                1
-            };
+            let cost =
+                if a_chars[i - 1].to_lowercase().next() == b_chars[j - 1].to_lowercase().next() {
+                    0
+                } else {
+                    1
+                };
             dp[i][j] = (dp[i - 1][j] + 1)
                 .min(dp[i][j - 1] + 1)
                 .min(dp[i - 1][j - 1] + cost);
@@ -47,7 +49,16 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
 
 /// Known standard categories in AppDepot.
 pub const CANONICAL_CATEGORIES: &[&str] = &[
-    "ide", "sdk", "browsers", "databases", "runtimes", "network", "office", "tools", "games", "media",
+    "ide",
+    "sdk",
+    "browsers",
+    "databases",
+    "runtimes",
+    "network",
+    "office",
+    "tools",
+    "games",
+    "media",
 ];
 
 /// Corrects a user-supplied category string if a human typo was made.
@@ -118,7 +129,7 @@ pub fn suggest_closest<'a>(input: &str, candidates: &'a [String]) -> Option<&'a 
 
         let dist = levenshtein_distance(&lower, &cand_lower);
         // Allow up to 3 character edits or 35% of length
-        let max_dist = (lower.len() / 3).max(2).min(4);
+        let max_dist = (lower.len() / 3).clamp(2, 4);
         if dist <= max_dist {
             if let Some((_, current_best)) = best_match {
                 if dist < current_best {
@@ -143,7 +154,10 @@ pub fn fuzzy_find_source_file(input_path: &Path) -> Option<PathBuf> {
     // Try parent directory of input_path
     let target_name = input_path.file_name()?.to_string_lossy().to_lowercase();
     let search_dirs = vec![
-        input_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from(".")),
+        input_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
         PathBuf::from("."),
         dirs_home_downloads(),
     ];
@@ -158,7 +172,10 @@ pub fn fuzzy_find_source_file(input_path: &Path) -> Option<PathBuf> {
                 if let Some(fname) = p.file_name().and_then(|f| f.to_str()) {
                     let fname_lower = fname.to_lowercase();
                     // Exact case-insensitive match or contains
-                    if fname_lower == target_name || fname_lower.contains(&target_name) || target_name.contains(&fname_lower) {
+                    if fname_lower == target_name
+                        || fname_lower.contains(&target_name)
+                        || target_name.contains(&fname_lower)
+                    {
                         return Some(p);
                     }
                     // Levenshtein close match
@@ -212,7 +229,10 @@ mod tests {
             "flutter".to_string(),
             "mysql".to_string(),
         ];
-        assert_eq!(suggest_closest("antigrvity", &candidates), Some("antigravity"));
+        assert_eq!(
+            suggest_closest("antigrvity", &candidates),
+            Some("antigravity")
+        );
         assert_eq!(suggest_closest("fluttr", &candidates), Some("flutter"));
         assert_eq!(suggest_closest("chome", &candidates), Some("chrome"));
         assert_eq!(suggest_closest("unknownxyz", &candidates), None);

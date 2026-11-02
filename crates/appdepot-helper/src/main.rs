@@ -18,24 +18,13 @@ use std::time::SystemTime;
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum HelperOperation {
     /// Configures the devtools setgid tree (/opt/Application with 2775)
-    InstallTree {
-        root: PathBuf,
-        group: String,
-    },
+    InstallTree { root: PathBuf, group: String },
     /// Fixes setuid ownership and mode (4755) for Chromium chrome-sandbox
-    SetSandbox {
-        path: PathBuf,
-    },
+    SetSandbox { path: PathBuf },
     /// Writes a system-wide desktop entry to /usr/share/applications
-    WriteSystemShortcut {
-        filename: String,
-        content: String,
-    },
+    WriteSystemShortcut { filename: String, content: String },
     /// Writes an environment fragment into /etc/profile.d/appdepot.d/
-    WriteEnvFragment {
-        filename: String,
-        content: String,
-    },
+    WriteEnvFragment { filename: String, content: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,10 +66,19 @@ fn execute_operation(op: HelperOperation) -> anyhow::Result<String> {
             fs::set_permissions(&root, perms)?;
 
             // Try to set group ownership
-            let _ = Command::new("chgrp").args(["-R", &group, &root_str]).status();
+            let _ = Command::new("chgrp")
+                .args(["-R", &group, &root_str])
+                .status();
 
             let standard_cats = [
-                "ide", "sdk", "browsers", "databases", "runtimes", "network", "office", "tools",
+                "ide",
+                "sdk",
+                "browsers",
+                "databases",
+                "runtimes",
+                "network",
+                "office",
+                "tools",
             ];
             for cat in &standard_cats {
                 let cat_dir = root.join(cat);
@@ -92,8 +90,15 @@ fn execute_operation(op: HelperOperation) -> anyhow::Result<String> {
                 }
             }
 
-            append_audit_log(&format!("Initialized root tree at {:?} for group {}", root, group));
-            Ok(format!("Tree at {} initialized with mode 2775 and group {}", root.display(), group))
+            append_audit_log(&format!(
+                "Initialized root tree at {:?} for group {}",
+                root, group
+            ));
+            Ok(format!(
+                "Tree at {} initialized with mode 2775 and group {}",
+                root.display(),
+                group
+            ))
         }
 
         HelperOperation::SetSandbox { path } => {
@@ -106,7 +111,9 @@ fn execute_operation(op: HelperOperation) -> anyhow::Result<String> {
             }
 
             // Chown root:root
-            let chown_res = Command::new("chown").args(["root:root", path.to_str().unwrap()]).status()?;
+            let chown_res = Command::new("chown")
+                .args(["root:root", path.to_str().unwrap()])
+                .status()?;
             if !chown_res.success() {
                 anyhow::bail!("Failed to chown root:root on {}", path.display());
             }
@@ -117,11 +124,15 @@ fn execute_operation(op: HelperOperation) -> anyhow::Result<String> {
             fs::set_permissions(&path, perms)?;
 
             append_audit_log(&format!("Applied mode 4755 root:root to {:?}", path));
-            Ok(format!("Successfully applied mode 4755 setuid to {}", path.display()))
+            Ok(format!(
+                "Successfully applied mode 4755 setuid to {}",
+                path.display()
+            ))
         }
 
         HelperOperation::WriteSystemShortcut { filename, content } => {
-            if filename.contains('/') || filename.contains("..") || !filename.ends_with(".desktop") {
+            if filename.contains('/') || filename.contains("..") || !filename.ends_with(".desktop")
+            {
                 anyhow::bail!("Security violation: Invalid desktop filename.");
             }
 
@@ -134,7 +145,9 @@ fn execute_operation(op: HelperOperation) -> anyhow::Result<String> {
             perms.set_mode(0o644);
             fs::set_permissions(&dest_file, perms)?;
 
-            let _ = Command::new("update-desktop-database").arg(sys_dir).status();
+            let _ = Command::new("update-desktop-database")
+                .arg(sys_dir)
+                .status();
 
             append_audit_log(&format!("Wrote system shortcut {}", filename));
             Ok(format!("Installed system shortcut {}", dest_file.display()))
@@ -155,7 +168,10 @@ fn execute_operation(op: HelperOperation) -> anyhow::Result<String> {
             fs::set_permissions(&dest_file, perms)?;
 
             append_audit_log(&format!("Wrote environment fragment {}", filename));
-            Ok(format!("Installed environment fragment {}", dest_file.display()))
+            Ok(format!(
+                "Installed environment fragment {}",
+                dest_file.display()
+            ))
         }
     }
 }

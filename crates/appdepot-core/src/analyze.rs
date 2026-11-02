@@ -63,9 +63,7 @@ impl Heuristics {
 
         // 2. Parent directory is install root or "bin"
         if let Some(parent) = path.parent() {
-            if parent == root_dir {
-                score += 30;
-            } else if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
+            if parent == root_dir || parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
                 score += 30;
             }
         }
@@ -156,7 +154,10 @@ impl Heuristics {
         let app_id_lower = app_id.to_lowercase();
         if file_name.starts_with(&app_id_lower) {
             score += 35;
-        } else if file_name.starts_with("icon") || file_name.starts_with("logo") || file_name.starts_with("app") {
+        } else if file_name.starts_with("icon")
+            || file_name.starts_with("logo")
+            || file_name.starts_with("app")
+        {
             score += 20;
         }
 
@@ -175,7 +176,7 @@ impl Heuristics {
     pub fn discover_executables(root_dir: &Path, app_id: &str) -> Vec<CandidateExecutable> {
         let mut candidates = Vec::new();
         Self::scan_executables_recursive(root_dir, root_dir, app_id, 0, &mut candidates);
-        candidates.sort_by(|a, b| b.score.cmp(&a.score));
+        candidates.sort_by_key(|a| std::cmp::Reverse(a.score));
         candidates
     }
 
@@ -198,7 +199,11 @@ impl Heuristics {
             let p = entry.path();
             if p.is_dir() {
                 let dname = entry.file_name().to_string_lossy().to_string();
-                if dname.starts_with('.') || dname == "node_modules" || dname == "test" || dname == "docs" {
+                if dname.starts_with('.')
+                    || dname == "node_modules"
+                    || dname == "test"
+                    || dname == "docs"
+                {
                     continue;
                 }
                 Self::scan_executables_recursive(&p, root_dir, app_id, depth + 1, out);
@@ -228,7 +233,7 @@ impl Heuristics {
     pub fn discover_icons(root_dir: &Path, app_id: &str) -> Vec<CandidateIcon> {
         let mut candidates = Vec::new();
         Self::scan_icons_recursive(root_dir, root_dir, app_id, 0, &mut candidates);
-        candidates.sort_by(|a, b| b.score.cmp(&a.score));
+        candidates.sort_by_key(|a| std::cmp::Reverse(a.score));
         candidates
     }
 

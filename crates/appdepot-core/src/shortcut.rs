@@ -57,7 +57,8 @@ impl DesktopShortcut {
         let content = self.render_desktop_file();
 
         // Target user applications directory (~/.local/share/applications)
-        let home = std::env::var("HOME").map_err(|_| Error::Custom("HOME env var not set".into()))?;
+        let home =
+            std::env::var("HOME").map_err(|_| Error::Custom("HOME env var not set".into()))?;
         let user_apps = PathBuf::from(&home).join(".local/share/applications");
         fs::create_dir_all(&user_apps)?;
 
@@ -84,7 +85,8 @@ impl DesktopShortcut {
 
     /// Creates a symlink in ~/.local/bin and /usr/local/bin for global shell access.
     pub fn install_bin_symlink(&self) -> Result<PathBuf, Error> {
-        let home = std::env::var("HOME").map_err(|_| Error::Custom("HOME env var not set".into()))?;
+        let home =
+            std::env::var("HOME").map_err(|_| Error::Custom("HOME env var not set".into()))?;
         let user_bin = PathBuf::from(&home).join(".local/bin");
         fs::create_dir_all(&user_bin)?;
 
@@ -115,22 +117,28 @@ pub fn remove_shortcuts(app_id: &str) -> Vec<PathBuf> {
 
     // Candidates for desktop files
     let desktop_candidates = vec![
-        PathBuf::from(&home).join(format!(".local/share/applications/appdepot-{}.desktop", app_id)),
+        PathBuf::from(&home).join(format!(
+            ".local/share/applications/appdepot-{}.desktop",
+            app_id
+        )),
         PathBuf::from(&home).join(format!(".local/share/applications/{}.desktop", app_id)),
-        PathBuf::from(format!("/usr/share/applications/appdepot-{}.desktop", app_id)),
+        PathBuf::from(format!(
+            "/usr/share/applications/appdepot-{}.desktop",
+            app_id
+        )),
     ];
 
     for path in desktop_candidates {
-        if path.exists() || path.symlink_metadata().is_ok() {
-            if fs::remove_file(&path).is_ok() {
-                removed.push(path.clone());
-            }
+        if (path.exists() || path.symlink_metadata().is_ok()) && fs::remove_file(&path).is_ok() {
+            removed.push(path);
         }
     }
 
     // Update desktop databases
     let user_apps = PathBuf::from(&home).join(".local/share/applications");
-    let _ = Command::new("update-desktop-database").arg(&user_apps).status();
+    let _ = Command::new("update-desktop-database")
+        .arg(&user_apps)
+        .status();
 
     // Candidates for binary symlinks
     let bin_candidates = vec![
@@ -139,10 +147,8 @@ pub fn remove_shortcuts(app_id: &str) -> Vec<PathBuf> {
     ];
 
     for path in bin_candidates {
-        if path.exists() || path.symlink_metadata().is_ok() {
-            if fs::remove_file(&path).is_ok() {
-                removed.push(path);
-            }
+        if (path.exists() || path.symlink_metadata().is_ok()) && fs::remove_file(&path).is_ok() {
+            removed.push(path);
         }
     }
 

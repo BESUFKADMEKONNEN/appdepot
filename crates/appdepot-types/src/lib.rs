@@ -94,6 +94,7 @@ pub struct Artifact {
 /// Individual actions emitted as part of a transactional Plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum Action {
     CreateDir {
         path: PathBuf,

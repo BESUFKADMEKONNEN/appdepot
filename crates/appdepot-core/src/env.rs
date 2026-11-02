@@ -48,9 +48,14 @@ fi
     let bashrc = PathBuf::from(&home).join(".bashrc");
     if bashrc.exists() {
         if let Ok(existing) = fs::read_to_string(&bashrc) {
-            let line = "[ -f \"$HOME/.config/appdepot/env.sh\" ] && . \"$HOME/.config/appdepot/env.sh\"";
+            let line =
+                "[ -f \"$HOME/.config/appdepot/env.sh\" ] && . \"$HOME/.config/appdepot/env.sh\"";
             if !existing.contains(".config/appdepot/env.sh") {
-                let updated = format!("{}\n\n# AppDepot Environment\n{}\n", existing.trim_end(), line);
+                let updated = format!(
+                    "{}\n\n# AppDepot Environment\n{}\n",
+                    existing.trim_end(),
+                    line
+                );
                 let _ = fs::write(&bashrc, updated);
             }
         }

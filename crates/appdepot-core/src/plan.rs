@@ -6,9 +6,6 @@ pub struct PlanExecutor;
 
 impl PlanExecutor {
     pub fn dry_run(plan: &Plan) -> Vec<String> {
-        plan.actions
-            .iter()
-            .map(|a| format!("{:?}", a))
-            .collect()
+        plan.actions.iter().map(|a| format!("{:?}", a)).collect()
     }
 }

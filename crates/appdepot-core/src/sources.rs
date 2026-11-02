@@ -164,7 +164,10 @@ fn unpack_tar(source: &Path, target_dir: &Path, tar_flags: &[&str]) -> Result<()
     let fallback_status = Command::new("tar").args(&fallback_args).status();
     match fallback_status {
         Ok(st) if st.success() => Ok(()),
-        Ok(st) => Err(Error::Archive(format!("tar command exited with status: {}", st))),
+        Ok(st) => Err(Error::Archive(format!(
+            "tar command exited with status: {}",
+            st
+        ))),
         Err(e) => Err(Error::Archive(format!("Failed to execute tar: {}", e))),
     }
 }
@@ -179,7 +182,10 @@ fn unpack_zip(source: &Path, target_dir: &Path) -> Result<(), Error> {
 
     match status {
         Ok(st) if st.success() => Ok(()),
-        Ok(st) => Err(Error::Archive(format!("unzip command exited with status: {}", st))),
+        Ok(st) => Err(Error::Archive(format!(
+            "unzip command exited with status: {}",
+            st
+        ))),
         Err(e) => Err(Error::Archive(format!("Failed to execute unzip: {}", e))),
     }
 }
@@ -208,7 +214,10 @@ fn unpack_deb(source: &Path, target_dir: &Path) -> Result<(), Error> {
     let status = Command::new("sh").args(["-c", &script]).status();
     match status {
         Ok(st) if st.success() => Ok(()),
-        Ok(st) => Err(Error::Archive(format!("Deb extraction failed with status: {}", st))),
+        Ok(st) => Err(Error::Archive(format!(
+            "Deb extraction failed with status: {}",
+            st
+        ))),
         Err(e) => Err(Error::Archive(format!("Deb extraction error: {}", e))),
     }
 }
@@ -252,7 +261,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Error> {
 }
 
 fn has_files(dir: &Path) -> bool {
-    fs::read_dir(dir).map(|mut r| r.next().is_some()).unwrap_or(false)
+    fs::read_dir(dir)
+        .map(|mut r| r.next().is_some())
+        .unwrap_or(false)
 }
 
 fn normalize_permissions(dir: &Path) -> Result<(), Error> {
@@ -279,28 +290,72 @@ fn normalize_permissions(dir: &Path) -> Result<(), Error> {
 
 /// Standard categories matching real Linux FHS organization under /opt/Application
 pub const STANDARD_CATEGORIES: &[(&str, &str, &str)] = &[
-    ("ide", "IDEs & Editors", "Antigravity, Android Studio, VS Code, JetBrains"),
-    ("sdk", "SDKs & Toolchains", "Flutter SDK, Android SDK, OpenJDK, Rust toolchains"),
-    ("browsers", "Web Browsers", "Chrome, Firefox, Chromium, Edge"),
-    ("databases", "Databases & Storage", "PostgreSQL, Redis, MySQL, MongoDB"),
-    ("runtimes", "Runtimes & Interpreters", "Node.js, Deno, Bun, Python, Go"),
+    (
+        "ide",
+        "IDEs & Editors",
+        "Antigravity, Android Studio, VS Code, JetBrains",
+    ),
+    (
+        "sdk",
+        "SDKs & Toolchains",
+        "Flutter SDK, Android SDK, OpenJDK, Rust toolchains",
+    ),
+    (
+        "browsers",
+        "Web Browsers",
+        "Chrome, Firefox, Chromium, Edge",
+    ),
+    (
+        "databases",
+        "Databases & Storage",
+        "PostgreSQL, Redis, MySQL, MongoDB",
+    ),
+    (
+        "runtimes",
+        "Runtimes & Interpreters",
+        "Node.js, Deno, Bun, Python, Go",
+    ),
     ("network", "Network & VPN", "NetBird, WireGuard, Wireshark"),
-    ("office", "Office & Productivity", "OnlyOffice, LibreOffice, Document Viewers"),
-    ("tools", "System & Dev Tools", "CLI utilities, profilers, Docker/Podman helpers"),
+    (
+        "office",
+        "Office & Productivity",
+        "OnlyOffice, LibreOffice, Document Viewers",
+    ),
+    (
+        "tools",
+        "System & Dev Tools",
+        "CLI utilities, profilers, Docker/Podman helpers",
+    ),
 ];
 
 /// Suggests the standard category based on application ID or executable name.
 pub fn suggest_category(app_id_or_name: &str) -> &'static str {
     let lower = app_id_or_name.to_lowercase();
-    if lower.contains("ide") || lower.contains("code") || lower.contains("studio") || lower.contains("editor") {
+    if lower.contains("ide")
+        || lower.contains("code")
+        || lower.contains("studio")
+        || lower.contains("editor")
+    {
         "ide"
-    } else if lower.contains("sdk") || lower.contains("flutter") || lower.contains("jdk") || lower.contains("cargo") {
+    } else if lower.contains("sdk")
+        || lower.contains("flutter")
+        || lower.contains("jdk")
+        || lower.contains("cargo")
+    {
         "sdk"
     } else if lower.contains("chrome") || lower.contains("firefox") || lower.contains("browser") {
         "browsers"
-    } else if lower.contains("sql") || lower.contains("redis") || lower.contains("database") || lower.contains("db") {
+    } else if lower.contains("sql")
+        || lower.contains("redis")
+        || lower.contains("database")
+        || lower.contains("db")
+    {
         "databases"
-    } else if lower.contains("node") || lower.contains("deno") || lower.contains("bun") || lower.contains("python") {
+    } else if lower.contains("node")
+        || lower.contains("deno")
+        || lower.contains("bun")
+        || lower.contains("python")
+    {
         "runtimes"
     } else if lower.contains("vpn") || lower.contains("netbird") || lower.contains("network") {
         "network"
@@ -317,7 +372,10 @@ mod tests {
 
     #[test]
     fn test_detect_source_kind() {
-        assert_eq!(detect_source_kind("https://example.com/app.tar.gz"), SourceKind::Url);
+        assert_eq!(
+            detect_source_kind("https://example.com/app.tar.gz"),
+            SourceKind::Url
+        );
         assert_eq!(detect_source_kind("app.tar.gz"), SourceKind::Tarball);
         assert_eq!(detect_source_kind("app.tgz"), SourceKind::Tarball);
         assert_eq!(detect_source_kind("app.tar.xz"), SourceKind::Tarball);

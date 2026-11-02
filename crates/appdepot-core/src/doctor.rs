@@ -96,7 +96,9 @@ impl Doctor {
                         mode & 0o7777
                     ),
                     fixable: true,
-                    hint: Some("Apply chmod 2775 to enable shared developer group writes".to_string()),
+                    hint: Some(
+                        "Apply chmod 2775 to enable shared developer group writes".to_string(),
+                    ),
                 });
             }
         }
@@ -150,7 +152,10 @@ impl Doctor {
                 let mut perms = fs::metadata(root_path).unwrap().permissions();
                 perms.set_mode(0o2775);
                 let _ = fs::set_permissions(root_path, perms);
-                fixed.push(format!("Created install root {} with mode 2775", root_path.display()));
+                fixed.push(format!(
+                    "Created install root {} with mode 2775",
+                    root_path.display()
+                ));
             }
         } else if let Ok(meta) = root_path.metadata() {
             let mode = meta.permissions().mode();
@@ -158,7 +163,10 @@ impl Doctor {
                 let mut perms = meta.permissions();
                 perms.set_mode(mode | 0o2775);
                 if fs::set_permissions(root_path, perms).is_ok() {
-                    fixed.push(format!("Applied mode 2775 (setgid) to {}", root_path.display()));
+                    fixed.push(format!(
+                        "Applied mode 2775 (setgid) to {}",
+                        root_path.display()
+                    ));
                 }
             }
         }
@@ -175,10 +183,11 @@ impl Doctor {
                 for entry in entries.flatten() {
                     let p = entry.path();
                     if let Ok(meta) = p.symlink_metadata() {
-                        if meta.file_type().is_symlink() && !p.exists() {
-                            if fs::remove_file(&p).is_ok() {
-                                fixed.push(format!("Pruned dangling symlink: {}", p.display()));
-                            }
+                        if meta.file_type().is_symlink()
+                            && !p.exists()
+                            && fs::remove_file(&p).is_ok()
+                        {
+                            fixed.push(format!("Pruned dangling symlink: {}", p.display()));
                         }
                     }
                 }
@@ -187,7 +196,10 @@ impl Doctor {
 
         // Fix D-007: Generate user environment loader in ~/.config/appdepot/env.sh
         if let Ok(env_path) = crate::env::write_user_env_loader() {
-            fixed.push(format!("Generated user environment loader at {}", env_path.display()));
+            fixed.push(format!(
+                "Generated user environment loader at {}",
+                env_path.display()
+            ));
         }
 
         fixed

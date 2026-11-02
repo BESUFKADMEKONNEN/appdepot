@@ -7,8 +7,12 @@ use appdepot_core::analyze::Heuristics;
 use appdepot_core::doctor::Doctor;
 use appdepot_core::env::{write_app_fragment, write_user_env_loader};
 use appdepot_core::shortcut::{remove_shortcuts, DesktopShortcut};
-use appdepot_core::sources::{detect_source_kind, download_from_url, suggest_category, unpack_source, SourceKind};
-use appdepot_core::typo::{correct_category_typo, fuzzy_find_source_file, suggest_closest, CANONICAL_CATEGORIES};
+use appdepot_core::sources::{
+    detect_source_kind, download_from_url, suggest_category, unpack_source, SourceKind,
+};
+use appdepot_core::typo::{
+    correct_category_typo, fuzzy_find_source_file, suggest_closest, CANONICAL_CATEGORIES,
+};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -208,12 +212,19 @@ fn get_all_installed_app_ids(root: &Path) -> Vec<String> {
     apps
 }
 
-fn list_apps(target_root: &Path, filter_category: Option<String>, json_format: bool) -> anyhow::Result<()> {
+fn list_apps(
+    target_root: &Path,
+    filter_category: Option<String>,
+    json_format: bool,
+) -> anyhow::Result<()> {
     if !target_root.exists() {
         if json_format {
             println!("[]");
         } else {
-            println!("Install root '{}' does not exist yet. Run 'depot init' to initialize.", target_root.display());
+            println!(
+                "Install root '{}' does not exist yet. Run 'depot init' to initialize.",
+                target_root.display()
+            );
         }
         return Ok(());
     }
@@ -236,7 +247,11 @@ fn list_apps(target_root: &Path, filter_category: Option<String>, json_format: b
         for cat_res in cat_dirs.flatten() {
             let cat_path = cat_res.path();
             if cat_path.is_dir() {
-                let cat_name = cat_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let cat_name = cat_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 if let Some(ref f) = normalized_filter {
                     if &cat_name != f {
                         continue;
@@ -246,14 +261,22 @@ fn list_apps(target_root: &Path, filter_category: Option<String>, json_format: b
                 if let Ok(app_dirs) = fs::read_dir(&cat_path) {
                     for app_res in app_dirs.flatten() {
                         let app_path = app_res.path();
-                        let app_name = app_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        let app_name = app_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
                         if app_name.starts_with('.') {
                             continue;
                         }
 
-                        let is_symlink = app_path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                        let is_symlink = app_path
+                            .symlink_metadata()
+                            .map(|m| m.file_type().is_symlink())
+                            .unwrap_or(false);
                         let (mode, target_display) = if is_symlink {
-                            let target = fs::read_link(&app_path).unwrap_or_else(|_| PathBuf::from("dangling"));
+                            let target = fs::read_link(&app_path)
+                                .unwrap_or_else(|_| PathBuf::from("dangling"));
                             ("linked", target.to_string_lossy().to_string())
                         } else {
                             ("managed", app_path.to_string_lossy().to_string())
@@ -282,9 +305,15 @@ fn list_apps(target_root: &Path, filter_category: Option<String>, json_format: b
             .collect();
         println!("{}", serde_json::to_string_pretty(&json_entries)?);
     } else {
-        println!("AppDepot Live Applications (Root: {}):", target_root.display());
+        println!(
+            "AppDepot Live Applications (Root: {}):",
+            target_root.display()
+        );
         println!("------------------------------------------------------------------------------------------");
-        println!("{:<14} {:<24} {:<10} {:<38}", "CATEGORY", "NAME", "MODE", "PATH / TARGET");
+        println!(
+            "{:<14} {:<24} {:<10} {:<38}",
+            "CATEGORY", "NAME", "MODE", "PATH / TARGET"
+        );
         println!("------------------------------------------------------------------------------------------");
         if entries.is_empty() {
             println!("No applications found under {}.", target_root.display());
@@ -306,10 +335,17 @@ fn show_app_info(target_root: &Path, app_id: &str, json_format: bool) -> anyhow:
         for cat_res in cat_dirs.flatten() {
             let cat_path = cat_res.path();
             if cat_path.is_dir() {
-                let cat_name = cat_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let cat_name = cat_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let candidate = cat_path.join(app_id);
                 if candidate.exists() || candidate.symlink_metadata().is_ok() {
-                    let is_symlink = candidate.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                    let is_symlink = candidate
+                        .symlink_metadata()
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
                     let target_path = if is_symlink {
                         fs::read_link(&candidate).unwrap_or_else(|_| PathBuf::from("dangling"))
                     } else {
@@ -321,14 +357,23 @@ fn show_app_info(target_root: &Path, app_id: &str, json_format: bool) -> anyhow:
                     let user_bin_symlink = PathBuf::from(&home).join(".local/bin").join(app_id);
                     let has_bin = bin_symlink.exists() || user_bin_symlink.exists();
 
-                    let desktop_sys = PathBuf::from(format!("/usr/share/applications/appdepot-{}.desktop", app_id));
-                    let desktop_usr = PathBuf::from(format!("{}/.local/share/applications/appdepot-{}.desktop", home, app_id));
+                    let desktop_sys = PathBuf::from(format!(
+                        "/usr/share/applications/appdepot-{}.desktop",
+                        app_id
+                    ));
+                    let desktop_usr = PathBuf::from(format!(
+                        "{}/.local/share/applications/appdepot-{}.desktop",
+                        home, app_id
+                    ));
                     let has_desktop = desktop_sys.exists() || desktop_usr.exists();
 
                     let sandbox = target_path.join("chrome-sandbox");
                     let has_sandbox = sandbox.exists();
                     let sandbox_mode = if has_sandbox {
-                        sandbox.metadata().map(|m| format!("{:o}", m.permissions().mode() & 0o7777)).unwrap_or_default()
+                        sandbox
+                            .metadata()
+                            .map(|m| format!("{:o}", m.permissions().mode() & 0o7777))
+                            .unwrap_or_default()
                     } else {
                         String::new()
                     };
@@ -356,11 +401,23 @@ fn show_app_info(target_root: &Path, app_id: &str, json_format: bool) -> anyhow:
         } else {
             println!("Application: {}", app_id);
             println!("----------------------------------------------------------------");
-            println!("• Category:        {}", info["category"].as_str().unwrap_or_default());
-            println!("• Ownership Mode:  {}", info["mode"].as_str().unwrap_or_default());
-            println!("• Stored Path:     {}", info["path"].as_str().unwrap_or_default());
+            println!(
+                "• Category:        {}",
+                info["category"].as_str().unwrap_or_default()
+            );
+            println!(
+                "• Ownership Mode:  {}",
+                info["mode"].as_str().unwrap_or_default()
+            );
+            println!(
+                "• Stored Path:     {}",
+                info["path"].as_str().unwrap_or_default()
+            );
             if info["mode"] == "linked" {
-                println!("• Physical Target: {}", info["target"].as_str().unwrap_or_default());
+                println!(
+                    "• Physical Target: {}",
+                    info["target"].as_str().unwrap_or_default()
+                );
             }
             println!(
                 "• Command Symlink: {}",
@@ -372,19 +429,29 @@ fn show_app_info(target_root: &Path, app_id: &str, json_format: bool) -> anyhow:
             );
             println!(
                 "• Desktop Entry:   {}",
-                if info["desktop_shortcut_registered"].as_bool().unwrap_or(false) {
+                if info["desktop_shortcut_registered"]
+                    .as_bool()
+                    .unwrap_or(false)
+                {
                     "Registered in ~/.local/share/applications"
                 } else {
                     "None"
                 }
             );
             if info["has_sandbox_helper"].as_bool().unwrap_or(false) {
-                println!("• Sandbox Helper:  Found chrome-sandbox (mode: {})", info["sandbox_mode"].as_str().unwrap_or_default());
+                println!(
+                    "• Sandbox Helper:  Found chrome-sandbox (mode: {})",
+                    info["sandbox_mode"].as_str().unwrap_or_default()
+                );
             }
             println!("----------------------------------------------------------------");
         }
     } else {
-        eprintln!("Application '{}' not found in {}.", app_id, target_root.display());
+        eprintln!(
+            "Application '{}' not found in {}.",
+            app_id,
+            target_root.display()
+        );
         // Human typo assistance
         let installed = get_all_installed_app_ids(target_root);
         if let Some(suggestion) = suggest_closest(app_id, &installed) {
@@ -410,8 +477,15 @@ fn execute_install(
         println!("Downloading package from URL: {}", source_input);
         let temp_dir = std::env::temp_dir().join("appdepot_downloads");
         fs::create_dir_all(&temp_dir)?;
-        let file_stem = Path::new(source_input).file_name().unwrap_or_default().to_string_lossy();
-        let download_dest = temp_dir.join(if file_stem.is_empty() { "download.tar.gz" } else { &file_stem });
+        let file_stem = Path::new(source_input)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let download_dest = temp_dir.join(if file_stem.is_empty() {
+            "download.tar.gz"
+        } else {
+            &file_stem
+        });
         download_from_url(source_input, &download_dest)?;
         temp_download_file = Some(download_dest.clone());
         download_dest
@@ -420,7 +494,11 @@ fn execute_install(
         if !input_path.exists() {
             // Typo check on source file path
             if let Some(fuzzy_path) = fuzzy_find_source_file(&input_path) {
-                println!("Notice: File '{}' not found. Using matched file: '{}'", source_input, fuzzy_path.display());
+                println!(
+                    "Notice: File '{}' not found. Using matched file: '{}'",
+                    source_input,
+                    fuzzy_path.display()
+                );
                 fuzzy_path
             } else {
                 anyhow::bail!("Source file or package '{}' does not exist.", source_input);
@@ -432,7 +510,11 @@ fn execute_install(
 
     // 2. Resolve App Name
     let app_name = name_input.unwrap_or_else(|| {
-        let stem = local_source.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let stem = local_source
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let clean = stem
             .trim_end_matches(".tar.gz")
             .trim_end_matches(".tar.xz")
@@ -469,9 +551,15 @@ fn execute_install(
         println!("• Application ID:    {}", app_name);
         println!("• Target Category:   {}", category);
         println!("• Install Directory: {}", target_dir.display());
-        println!("• Desktop Shortcut:  ~/.local/share/applications/appdepot-{}.desktop", app_name);
+        println!(
+            "• Desktop Shortcut:  ~/.local/share/applications/appdepot-{}.desktop",
+            app_name
+        );
         println!("• Terminal Symlink:  ~/.local/bin/{}", app_name);
-        println!("• Environment:       ~/.config/appdepot/env.d/{}.sh", app_name);
+        println!(
+            "• Environment:       ~/.config/appdepot/env.d/{}.sh",
+            app_name
+        );
         println!("------------------------------------------------------------");
         return Ok(());
     }
@@ -480,7 +568,10 @@ fn execute_install(
 
     // 4. Safe staged extraction
     if target_dir.exists() {
-        println!("Notice: Overwriting existing installation at {}", target_dir.display());
+        println!(
+            "Notice: Overwriting existing installation at {}",
+            target_dir.display()
+        );
         let _ = fs::remove_dir_all(&target_dir);
     }
     fs::create_dir_all(&target_dir)?;
@@ -512,7 +603,10 @@ fn execute_install(
 
     // 7. Check for Chromium setuid sandbox
     if let Some(sandbox) = Heuristics::detect_chromium_sandbox(&target_dir) {
-        println!("• Detected Chromium sandbox helper at: {}", sandbox.display());
+        println!(
+            "• Detected Chromium sandbox helper at: {}",
+            sandbox.display()
+        );
         println!("  (Run 'depot doctor --fix' if setuid permissions are needed)");
     }
 
@@ -558,7 +652,11 @@ fn execute_install(
     println!("• Directory: {}", target_dir.display());
     println!("• Main Exec: {}", main_exec.display());
     println!("• Shortcut:  {}", desktop_file.display());
-    println!("• PATH Link: {} (Run '{}' in any terminal)", bin_link.display(), app_name);
+    println!(
+        "• PATH Link: {} (Run '{}' in any terminal)",
+        bin_link.display(),
+        app_name
+    );
     println!("------------------------------------------------------------");
 
     Ok(())
@@ -575,8 +673,17 @@ fn execute_remove(root: &Path, app_id: &str, skip_confirm: bool) -> anyhow::Resu
             if cat_path.is_dir() {
                 let candidate = cat_path.join(app_id);
                 if candidate.exists() || candidate.symlink_metadata().is_ok() {
-                    found_cat = Some(cat_path.file_name().unwrap_or_default().to_string_lossy().to_string());
-                    is_link = candidate.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                    found_cat = Some(
+                        cat_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                    is_link = candidate
+                        .symlink_metadata()
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
                     found_path = Some(candidate);
                     break;
                 }
@@ -587,7 +694,11 @@ fn execute_remove(root: &Path, app_id: &str, skip_confirm: bool) -> anyhow::Resu
     let target = match found_path {
         Some(p) => p,
         None => {
-            eprintln!("Error: Application '{}' not found in {}.", app_id, root.display());
+            eprintln!(
+                "Error: Application '{}' not found in {}.",
+                app_id,
+                root.display()
+            );
             let installed = get_all_installed_app_ids(root);
             if let Some(cand) = suggest_closest(app_id, &installed) {
                 eprintln!("Did you mean '{}'?", cand);
@@ -597,11 +708,21 @@ fn execute_remove(root: &Path, app_id: &str, skip_confirm: bool) -> anyhow::Resu
     };
 
     if !skip_confirm {
-        println!("Application '{}' found in category '{}'.", app_id, found_cat.as_deref().unwrap_or(""));
+        println!(
+            "Application '{}' found in category '{}'.",
+            app_id,
+            found_cat.as_deref().unwrap_or("")
+        );
         println!("This will delete: ");
         println!("  • {}", target.display());
-        println!("  • Desktop entries and binary symlinks (~/.local/bin/{})", app_id);
-        println!("  • Environment fragment in ~/.config/appdepot/env.d/{}.sh", app_id);
+        println!(
+            "  • Desktop entries and binary symlinks (~/.local/bin/{})",
+            app_id
+        );
+        println!(
+            "  • Environment fragment in ~/.config/appdepot/env.d/{}.sh",
+            app_id
+        );
     }
 
     // 1. Remove files
@@ -617,7 +738,11 @@ fn execute_remove(root: &Path, app_id: &str, skip_confirm: bool) -> anyhow::Resu
     // 3. Remove environment fragment
     let _ = appdepot_core::env::remove_app_fragment(app_id);
 
-    println!("\n✓ Cleanly removed '{}'. Purged {} ledger artifacts.", app_id, removed_artifacts.len() + 1);
+    println!(
+        "\n✓ Cleanly removed '{}'. Purged {} ledger artifacts.",
+        app_id,
+        removed_artifacts.len() + 1
+    );
     for art in removed_artifacts {
         println!("  • Removed: {}", art.display());
     }
@@ -625,17 +750,28 @@ fn execute_remove(root: &Path, app_id: &str, skip_confirm: bool) -> anyhow::Resu
     Ok(())
 }
 
-fn execute_adopt(root: &Path, source_path: &Path, category_arg: Option<String>, name_arg: Option<String>) -> anyhow::Result<()> {
+fn execute_adopt(
+    root: &Path,
+    source_path: &Path,
+    category_arg: Option<String>,
+    name_arg: Option<String>,
+) -> anyhow::Result<()> {
     if !source_path.exists() {
         anyhow::bail!("Path to adopt '{}' does not exist.", source_path.display());
     }
 
     let app_name = name_arg.unwrap_or_else(|| {
-        source_path.file_name().unwrap_or_default().to_string_lossy().to_string()
+        source_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
     });
 
     let category = match category_arg {
-        Some(c) => correct_category_typo(&c).unwrap_or_else(|_| suggest_category(&app_name).to_string()),
+        Some(c) => {
+            correct_category_typo(&c).unwrap_or_else(|_| suggest_category(&app_name).to_string())
+        }
         None => suggest_category(&app_name).to_string(),
     };
 
@@ -676,10 +812,20 @@ fn execute_adopt(root: &Path, source_path: &Path, category_arg: Option<String>, 
     let _ = shortcut.install_desktop_file();
     let _ = shortcut.install_bin_symlink();
 
-    println!("✓ Successfully adopted '{}' into category '{}'!", app_name, category);
-    println!("• Linked:   {} -> {}", target_link.display(), source_path.display());
+    println!(
+        "✓ Successfully adopted '{}' into category '{}'!",
+        app_name, category
+    );
+    println!(
+        "• Linked:   {} -> {}",
+        target_link.display(),
+        source_path.display()
+    );
     println!("• Exec:     {}", main_exec.display());
-    println!("• Shortcut: ~/.local/share/applications/appdepot-{}.desktop", app_name);
+    println!(
+        "• Shortcut: ~/.local/share/applications/appdepot-{}.desktop",
+        app_name
+    );
 
     Ok(())
 }
@@ -744,7 +890,10 @@ fn main() -> anyhow::Result<()> {
                 let _ = fs::set_permissions(&target_root, perms);
             }
 
-            println!("Creating standard categories: {}", CANONICAL_CATEGORIES.join(", "));
+            println!(
+                "Creating standard categories: {}",
+                CANONICAL_CATEGORIES.join(", ")
+            );
             for cat in CANONICAL_CATEGORIES {
                 let cat_dir = target_root.join(cat);
                 let _ = fs::create_dir_all(&cat_dir);
@@ -758,7 +907,10 @@ fn main() -> anyhow::Result<()> {
             // Write user environment loader
             let env_loader = write_user_env_loader()?;
             println!("✓ Init complete. Mode 2775 (setgid) and categories ready.");
-            println!("✓ Shell environment loader configured at {}", env_loader.display());
+            println!(
+                "✓ Shell environment loader configured at {}",
+                env_loader.display()
+            );
         }
 
         Commands::List { category } => {
@@ -782,19 +934,37 @@ fn main() -> anyhow::Result<()> {
             execute_remove(&effective_root, &app, yes)?;
         }
 
-        Commands::Link { path, category, name } => {
-            let cat = correct_category_typo(&category).unwrap_or_else(|_| category);
-            let link_name = name.unwrap_or_else(|| path.file_name().unwrap_or_default().to_string_lossy().to_string());
+        Commands::Link {
+            path,
+            category,
+            name,
+        } => {
+            let cat = correct_category_typo(&category).unwrap_or(category);
+            let link_name = name.unwrap_or_else(|| {
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            });
             let target = effective_root.join(&cat).join(&link_name);
             fs::create_dir_all(effective_root.join(&cat))?;
             if target.exists() || target.symlink_metadata().is_ok() {
                 let _ = fs::remove_file(&target);
             }
             std::os::unix::fs::symlink(&path, &target)?;
-            println!("✓ Linked external package '{}' into category '{}' as '{}'", path.display(), cat, link_name);
+            println!(
+                "✓ Linked external package '{}' into category '{}' as '{}'",
+                path.display(),
+                cat,
+                link_name
+            );
         }
 
-        Commands::Adopt { path, category, name } => {
+        Commands::Adopt {
+            path,
+            category,
+            name,
+        } => {
             if let Some(p) = path {
                 execute_adopt(&effective_root, &p, category, name)?;
             } else {
@@ -803,7 +973,10 @@ fn main() -> anyhow::Result<()> {
                     for entry in entries.flatten() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         if name != "Application" && !name.starts_with('.') {
-                            println!("• Found candidate: /opt/{} (Run 'depot adopt /opt/{}' to adopt)", name, name);
+                            println!(
+                                "• Found candidate: /opt/{} (Run 'depot adopt /opt/{}' to adopt)",
+                                name, name
+                            );
                         }
                     }
                 }
@@ -824,7 +997,10 @@ fn main() -> anyhow::Result<()> {
             }
             EnvAction::Apply => {
                 let path = write_user_env_loader()?;
-                println!("✓ Regenerated AppDepot environment loader at: {}", path.display());
+                println!(
+                    "✓ Regenerated AppDepot environment loader at: {}",
+                    path.display()
+                );
             }
         },
 
