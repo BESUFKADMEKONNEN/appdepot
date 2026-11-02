@@ -17,6 +17,9 @@ import {
   launchApp,
   openFolder,
   exportStackManifest,
+  browseDirectory,
+  createDirectory,
+  pickNativePath,
   ROOT_PATH,
   USER_ROOT,
   USER_HOME,
@@ -257,6 +260,48 @@ function appDepotApiPlugin() {
           const body = await parseJsonBody(req);
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(openFolder(body.path)));
+        } catch (e: any) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: e.message, success: false }));
+        }
+      });
+
+      // ── 17. File System Browser (ls/browse) ─────────────────────────
+      server.middlewares.use('/api/fs/browse', async (req: any, res: any) => {
+        if (req.method !== 'POST') return;
+        try {
+          const body = await parseJsonBody(req);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(browseDirectory(body.path)));
+        } catch (e: any) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: e.message, success: false }));
+        }
+      });
+
+      // ── 18. File System Directory Creation (mkdir) ───────────────────
+      server.middlewares.use('/api/fs/mkdir', async (req: any, res: any) => {
+        if (req.method !== 'POST') return;
+        try {
+          const body = await parseJsonBody(req);
+          const result = createDirectory(body.parentDir, body.folderName);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(result));
+          if (result.success) broadcast('fs_change', { eventType: 'folder_created', path: result.createdPath, time: Date.now() });
+        } catch (e: any) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: e.message, success: false }));
+        }
+      });
+
+      // ── 19. Native OS File/Folder Dialog Trigger (kdialog/zenity) ───
+      server.middlewares.use('/api/fs/native-pick', async (req: any, res: any) => {
+        if (req.method !== 'POST') return;
+        try {
+          const body = await parseJsonBody(req);
+          const result = await pickNativePath(body || {});
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(result));
         } catch (e: any) {
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: e.message, success: false }));

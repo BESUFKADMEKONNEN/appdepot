@@ -1036,3 +1036,183 @@
   border-bottom: none;
   padding-bottom: 0;
 }
+
+/* ── File System Browser & Directory Explorer Modal ───────────────────────── */
+.picker-modal-card {
+  width: 780px;
+  max-width: 95vw;
+  height: 640px;
+  max-height: 90vh;
+  background-color: var(--surface);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.picker-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 18px;
+  background: rgba(14, 17, 24, 0.7);
+  border-bottom: 1px solid var(--border);
+}
+
+.picker-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.picker-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+  background: rgba(8, 10, 15, 0.6);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  min-height: 32px;
+}
+
+.crumb-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.crumb-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.crumb-btn.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.crumb-separator {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.picker-bookmarks {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.bookmark-chip {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s;
+}
+
+.bookmark-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.bookmark-chip.active {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: var(--accent);
+}
+
+.picker-new-folder-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(56, 189, 248, 0.06);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+
+.picker-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.picker-items-table {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.picker-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 18px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  transition: background 0.1s ease;
+  user-select: none;
+}
+
+.picker-item-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.picker-item-row.selected {
+  background: rgba(56, 189, 248, 0.12);
+  color: #ffffff;
+}
+
+.picker-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.picker-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-item-size {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: monospace;
+  width: 70px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.picker-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: rgba(10, 12, 17, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}

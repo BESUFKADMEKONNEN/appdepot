@@ -17,6 +17,14 @@ export const KNOWN_CATEGORIES = [
 
 // In-memory cache for directory disk usage to keep scans instantaneous
 const sizeCache = new Map<string, { size: string; timestamp: number }>();
+const cliVersionCache = new Map<string, string>();
+
+export function formatByteSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
 
 export interface ScannedApp {
   id: string;
@@ -34,6 +42,9 @@ export interface ScannedApp {
   sizeFormatted?: string;
   status: 'healthy' | 'warning' | 'broken';
   hasSandboxFix?: boolean;
+  isCli?: boolean;
+  cliType?: string;
+  description?: string;
 }
 
 /**
@@ -387,8 +398,138 @@ export function scanInstalledApps(): ScannedApp[] {
     } catch (e) {}
   }
 
+  // Step 3: Dynamically scan developer CLI tools, compilers, runtimes, package managers, and system utilities in PATH
+  const cliSearchDirs = [
+    '/usr/bin',
+    '/usr/local/bin',
+    '/bin',
+    path.join(USER_HOME, '.cargo/bin'),
+    path.join(USER_HOME, '.local/bin'),
+    '/snap/bin',
+  ];
+
+  for (const item of SYSTEM_CLI_REGISTRY) {
+    if (seenIds.has(item.id) || seenAppNames.has(item.name.toLowerCase())) continue;
+
+    for (const sDir of cliSearchDirs) {
+      const binPath = path.join(sDir, item.bin);
+      try {
+        if (!fs.existsSync(binPath)) continue;
+        const st = fs.statSync(binPath);
+        if (!st.isFile() || (st.mode & 0o111) === 0) continue;
+
+        seenIds.add(item.id);
+        seenAppNames.add(item.name.toLowerCase());
+
+        let ver = cliVersionCache.get(binPath);
+        if (!ver) {
+          try {
+            const out = execSync(`"${binPath}" ${item.verFlag || '--version'} 2>&1`, {
+              timeout: 400,
+              encoding: 'utf-8',
+              env: { ...process.env, LANG: 'C' },
+            });
+            const firstLine = out.trim().split('\n')[0] || '';
+            const m = firstLine.match(/(\d+\.\d+(\.\d+)?(-[a-zA-Z0-9.]+)?)/);
+            ver = m ? m[1] : (firstLine.slice(0, 24) || 'installed');
+            cliVersionCache.set(binPath, ver);
+          } catch (e) {
+            ver = 'installed';
+            cliVersionCache.set(binPath, ver);
+          }
+        }
+
+        const sizeFormatted = st.size > 0 ? formatByteSize(st.size) : 'System';
+
+        apps.push({
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          version: ver,
+          mode: 'system',
+          isCli: true,
+          cliType: item.cliType,
+          description: item.description,
+          path: binPath,
+          linkPath: null,
+          command: item.bin,
+          execPath: binPath,
+          desktopPath: null,
+          iconPath: null,
+          artifactsCount: 1,
+          sizeFormatted,
+          status: 'healthy',
+          hasSandboxFix: false,
+        });
+        break; // Stop at first directory where tool is found
+      } catch (e) {}
+    }
+  }
+
   return apps;
 }
+
+interface CliRegistryEntry {
+  id: string;
+  bin: string;
+  name: string;
+  category: string;
+  cliType: string;
+  verFlag?: string;
+  description: string;
+}
+
+export const SYSTEM_CLI_REGISTRY: CliRegistryEntry[] = [
+  // Developer Version Control
+  { id: 'git', bin: 'git', name: 'Git VCS', category: 'tools', cliType: 'vcs', verFlag: '--version', description: 'Fast, scalable, distributed revision control system' },
+  { id: 'gh', bin: 'gh', name: 'GitHub CLI', category: 'tools', cliType: 'vcs', verFlag: '--version', description: 'GitHub official command line tool' },
+  // Container & Orchestration
+  { id: 'docker', bin: 'docker', name: 'Docker Engine', category: 'tools', cliType: 'container', verFlag: '--version', description: 'Pack, ship and run any application as a lightweight container' },
+  { id: 'podman', bin: 'podman', name: 'Podman Engine', category: 'tools', cliType: 'container', verFlag: '--version', description: 'Daemonless container engine for developing, managing OCI containers' },
+  { id: 'kubectl', bin: 'kubectl', name: 'Kubernetes CLI', category: 'network', cliType: 'container', verFlag: 'version --client -o yaml', description: 'Command line tool for controlling Kubernetes clusters' },
+  { id: 'helm', bin: 'helm', name: 'Helm Package Mgr', category: 'tools', cliType: 'container', verFlag: 'version --short', description: 'The Kubernetes Package Manager' },
+  // Runtimes & Interpreters
+  { id: 'python3', bin: 'python3', name: 'Python 3 Runtime', category: 'runtimes', cliType: 'runtime', verFlag: '--version', description: 'High-level scripting and programming language runtime' },
+  { id: 'python', bin: 'python', name: 'Python Runtime', category: 'runtimes', cliType: 'runtime', verFlag: '--version', description: 'Python programming language interpreter' },
+  { id: 'pip3', bin: 'pip3', name: 'Pip3 Package Mgr', category: 'tools', cliType: 'sdk', verFlag: '--version', description: 'The PyPA recommended tool for installing Python packages' },
+  { id: 'node', bin: 'node', name: 'Node.js Runtime', category: 'runtimes', cliType: 'runtime', verFlag: '--version', description: 'JavaScript runtime built on Chrome\'s V8 engine' },
+  { id: 'npm', bin: 'npm', name: 'NPM Package Mgr', category: 'tools', cliType: 'sdk', verFlag: '--version', description: 'Package manager for the JavaScript programming language' },
+  { id: 'pnpm', bin: 'pnpm', name: 'PNPM Package Mgr', category: 'tools', cliType: 'sdk', verFlag: '--version', description: 'Fast, disk space efficient package manager' },
+  { id: 'yarn', bin: 'yarn', name: 'Yarn Package Mgr', category: 'tools', cliType: 'sdk', verFlag: '--version', description: 'Fast, reliable, and secure dependency management' },
+  { id: 'bun', bin: 'bun', name: 'Bun Runtime', category: 'runtimes', cliType: 'runtime', verFlag: '--version', description: 'Fast all-in-one JavaScript runtime & toolkit' },
+  { id: 'deno', bin: 'deno', name: 'Deno Runtime', category: 'runtimes', cliType: 'runtime', verFlag: '--version', description: 'Modern and secure runtime for JavaScript and TypeScript' },
+  { id: 'java', bin: 'java', name: 'Java OpenJDK', category: 'runtimes', cliType: 'runtime', verFlag: '--version', description: 'OpenJDK 64-Bit Server VM and execution environment' },
+  // SDKs & Compilers
+  { id: 'cargo', bin: 'cargo', name: 'Cargo Rust PM', category: 'sdk', cliType: 'sdk', verFlag: '--version', description: 'The Rust package manager and crate builder' },
+  { id: 'rustc', bin: 'rustc', name: 'Rust Compiler', category: 'sdk', cliType: 'compiler', verFlag: '--version', description: 'The compiler for the Rust programming language' },
+  { id: 'rustup', bin: 'rustup', name: 'Rustup Toolchain', category: 'sdk', cliType: 'sdk', verFlag: '--version', description: 'The Rust toolchain installer' },
+  { id: 'go', bin: 'go', name: 'Go Toolchain', category: 'sdk', cliType: 'sdk', verFlag: 'version', description: 'Open source programming language to build simple, fast software' },
+  { id: 'javac', bin: 'javac', name: 'Java Compiler', category: 'sdk', cliType: 'compiler', verFlag: '--version', description: 'Compiler for the Java programming language' },
+  { id: 'mvn', bin: 'mvn', name: 'Apache Maven', category: 'sdk', cliType: 'sdk', verFlag: '-version', description: 'Software project management and comprehension tool' },
+  { id: 'gradle', bin: 'gradle', name: 'Gradle Build Tool', category: 'sdk', cliType: 'sdk', verFlag: '--version', description: 'Modern, high-performance build automation tool' },
+  { id: 'gcc', bin: 'gcc', name: 'GNU GCC Compiler', category: 'sdk', cliType: 'compiler', verFlag: '--version', description: 'GNU Compiler Collection for C and C++' },
+  { id: 'g++', bin: 'g++', name: 'GNU G++ Compiler', category: 'sdk', cliType: 'compiler', verFlag: '--version', description: 'GNU C++ Compiler' },
+  { id: 'clang', bin: 'clang', name: 'LLVM Clang', category: 'sdk', cliType: 'compiler', verFlag: '--version', description: 'C language family frontend for LLVM' },
+  { id: 'make', bin: 'make', name: 'GNU Make', category: 'tools', cliType: 'sdk', verFlag: '--version', description: 'Controls the generation of executables and non-source files' },
+  { id: 'cmake', bin: 'cmake', name: 'CMake Build System', category: 'sdk', cliType: 'sdk', verFlag: '--version', description: 'Cross-platform open-source build system' },
+  { id: 'ninja', bin: 'ninja', name: 'Ninja Build', category: 'sdk', cliType: 'sdk', verFlag: '--version', description: 'Small build system with a focus on speed' },
+  // System Tools & Productivity
+  { id: 'tmux', bin: 'tmux', name: 'Tmux Multiplexer', category: 'tools', cliType: 'tool', verFlag: '-V', description: 'Terminal multiplexer workspace' },
+  { id: 'zsh', bin: 'zsh', name: 'Z Shell', category: 'tools', cliType: 'tool', verFlag: '--version', description: 'Advanced programmable command line shell' },
+  { id: 'vim', bin: 'vim', name: 'Vim Editor', category: 'ide', cliType: 'tool', verFlag: '--version', description: 'Highly configurable modal text editor' },
+  { id: 'nvim', bin: 'nvim', name: 'Neovim Editor', category: 'ide', cliType: 'tool', verFlag: '--version', description: 'Vim-fork focused on extensibility and usability' },
+  { id: 'htop', bin: 'htop', name: 'Htop Monitor', category: 'tools', cliType: 'tool', verFlag: '--version', description: 'Interactive process viewer for Unix systems' },
+  { id: 'btop', bin: 'btop', name: 'Btop Monitor', category: 'tools', cliType: 'tool', verFlag: '--version', description: 'Modern resource monitor showing usage and stats for CPU, mem, disks' },
+  { id: 'rg', bin: 'rg', name: 'Ripgrep Search', category: 'tools', cliType: 'tool', verFlag: '--version', description: 'Line-oriented search tool that recursively searches current directory' },
+  { id: 'fd', bin: 'fd', name: 'Fd Find Tool', category: 'tools', cliType: 'tool', verFlag: '--version', description: 'Simple, fast and user-friendly alternative to find' },
+  { id: 'jq', bin: 'jq', name: 'Jq JSON Tool', category: 'tools', cliType: 'tool', verFlag: '--version', description: 'Command-line JSON processor' },
+  { id: 'curl', bin: 'curl', name: 'Curl URL Client', category: 'network', cliType: 'network', verFlag: '--version', description: 'Command line tool and library for transferring data with URLs' },
+  { id: 'wget', bin: 'wget', name: 'Wget Downloader', category: 'network', cliType: 'network', verFlag: '--version', description: 'Package for retrieving files using HTTP, HTTPS, FTP and FTPS' },
+  { id: 'ssh', bin: 'ssh', name: 'OpenSSH Client', category: 'network', cliType: 'network', verFlag: '-V', description: 'OpenSSH SSH client (remote login program)' },
+  { id: 'gpg', bin: 'gpg', name: 'GnuPG Crypto', category: 'tools', cliType: 'tool', verFlag: '--version', description: 'OpenPGP encryption and signing tool' },
+  { id: 'tcpdump', bin: 'tcpdump', name: 'Tcpdump Sniffer', category: 'network', cliType: 'network', verFlag: '--version', description: 'Powerful command-line packet analyzer' },
+  { id: 'nmap', bin: 'nmap', name: 'Nmap Scanner', category: 'network', cliType: 'network', verFlag: '--version', description: 'Network exploration tool and security / port scanner' },
+];
 
 /**
  * Infers an appropriate AppDepot category dynamically from a name or description.
@@ -1634,5 +1775,233 @@ export function exportStackManifest(stackId: string) {
   }
 
   return { toml, json: manifest };
+}
+
+// ── File System Browser & Directory Creator ─────────────────────────────────
+
+export interface FsItem {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  isArchive: boolean;
+  isExecutable: boolean;
+  size: number;
+  sizeFormatted: string;
+  modified: number;
+  extension: string;
+}
+
+export interface BrowseResult {
+  currentPath: string;
+  parentPath: string;
+  exists: boolean;
+  canWrite: boolean;
+  breadcrumbs: Array<{ name: string; path: string }>;
+  items: FsItem[];
+  quickBookmarks: Array<{ name: string; path: string }>;
+  error?: string;
+}
+
+/**
+ * Browses a directory path on the host system, returning folders, archives, and executables.
+ */
+export function browseDirectory(targetPath?: string): BrowseResult {
+  const home = USER_HOME;
+  let resolved = targetPath
+    ? (targetPath.startsWith('~') ? path.join(home, targetPath.slice(1)) : path.resolve(targetPath))
+    : home;
+
+  if (!fs.existsSync(resolved)) {
+    resolved = home;
+  }
+
+  try {
+    const st = fs.statSync(resolved);
+    if (!st.isDirectory()) {
+      resolved = path.dirname(resolved);
+    }
+  } catch (e) {
+    resolved = home;
+  }
+
+  let canWrite = false;
+  try {
+    fs.accessSync(resolved, fs.constants.W_OK);
+    canWrite = true;
+  } catch (e) {
+    canWrite = false;
+  }
+
+  const parts = resolved.split('/').filter(Boolean);
+  const breadcrumbs: Array<{ name: string; path: string }> = [{ name: 'Root (/)', path: '/' }];
+  let accum = '';
+  for (const p of parts) {
+    accum += '/' + p;
+    breadcrumbs.push({ name: p, path: accum });
+  }
+
+  const quickBookmarks = [
+    { name: 'Home (~)', path: home },
+    { name: 'Downloads', path: path.join(home, 'Downloads') },
+    { name: '/opt/Application', path: ROOT_PATH },
+    { name: '/opt', path: '/opt' },
+    { name: '/usr/bin', path: '/usr/bin' },
+    { name: '/tmp', path: '/tmp' },
+  ];
+
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(resolved);
+  } catch (e: any) {
+    return {
+      currentPath: resolved,
+      parentPath: path.dirname(resolved),
+      exists: true,
+      canWrite,
+      breadcrumbs,
+      items: [],
+      quickBookmarks,
+      error: `Access Denied: ${e.message}`,
+    };
+  }
+
+  const items: FsItem[] = [];
+  for (const entry of entries) {
+    if (entry.startsWith('.')) continue;
+    const full = path.join(resolved, entry);
+    try {
+      const st = fs.lstatSync(full);
+      const isDir = st.isDirectory();
+      const isArchive = /\.(tar(\.[a-z0-9]+)?|tgz|tbz2|txz|zip|deb|appimage|rpm)$/i.test(entry);
+      const isExec = !isDir && (st.mode & 0o111) !== 0;
+      items.push({
+        name: entry,
+        path: full,
+        isDirectory: isDir,
+        isArchive,
+        isExecutable: isExec,
+        size: st.size,
+        sizeFormatted: isDir ? '--' : formatByteSize(st.size),
+        modified: st.mtimeMs,
+        extension: path.extname(entry).toLowerCase(),
+      });
+    } catch (e) {}
+  }
+
+  items.sort((a, b) => {
+    if (a.isDirectory && !b.isDirectory) return -1;
+    if (!a.isDirectory && b.isDirectory) return 1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
+
+  return {
+    currentPath: resolved,
+    parentPath: path.dirname(resolved),
+    exists: true,
+    canWrite,
+    breadcrumbs,
+    items,
+    quickBookmarks,
+  };
+}
+
+/**
+ * Creates a new directory securely on disk with appropriate permissions.
+ */
+export function createDirectory(parentDir: string, folderName: string): { success: boolean; createdPath?: string; error?: string } {
+  if (!folderName || !folderName.trim()) {
+    return { success: false, error: 'Folder name cannot be empty.' };
+  }
+  const cleanName = folderName.trim();
+  if (cleanName.includes('/') || cleanName.includes('\\') || cleanName === '..' || cleanName === '.') {
+    return { success: false, error: 'Invalid folder name. Cannot contain path separators or parent traversals.' };
+  }
+
+  let resolvedParent = parentDir
+    ? (parentDir.startsWith('~') ? path.join(USER_HOME, parentDir.slice(1)) : path.resolve(parentDir))
+    : USER_HOME;
+
+  if (!fs.existsSync(resolvedParent)) {
+    return { success: false, error: `Parent directory does not exist: ${resolvedParent}` };
+  }
+
+  const targetPath = path.join(resolvedParent, cleanName);
+  if (fs.existsSync(targetPath)) {
+    return { success: false, error: `A file or directory already exists at: ${targetPath}` };
+  }
+
+  try {
+    fs.mkdirSync(targetPath, { recursive: true, mode: 0o775 });
+    if (targetPath.startsWith(ROOT_PATH)) {
+      try { fs.chmodSync(targetPath, 0o2775); } catch (e) {}
+    }
+    return { success: true, createdPath: targetPath };
+  } catch (e: any) {
+    return { success: false, error: `Failed to create directory: ${e.message}` };
+  }
+}
+
+/**
+ * Triggers native desktop file/folder dialog (kdialog / zenity) on KDE/Linux desktops.
+ */
+export function pickNativePath(options: { type?: 'file' | 'folder'; startDir?: string; title?: string }): Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const isFolder = options.type === 'folder';
+    const start = options.startDir || USER_HOME;
+    const title = options.title || (isFolder ? 'Select Directory' : 'Select Package / Archive');
+
+    const env = {
+      ...process.env,
+      DISPLAY: process.env.DISPLAY || ':0',
+      XDG_CURRENT_DESKTOP: process.env.XDG_CURRENT_DESKTOP || 'KDE',
+    };
+
+    const hasKdialog = fs.existsSync('/usr/bin/kdialog');
+    const hasZenity = fs.existsSync('/usr/bin/zenity');
+
+    if (hasKdialog) {
+      const args = isFolder
+        ? ['--getexistingdirectory', start, '--title', title]
+        : ['--getopenfilename', start, '*.tar.* *.zip *.deb *.AppImage *|Installable Archives & Binaries (*.tar.*, *.deb, *.AppImage, *.zip)\n*|All Files (*)', '--title', title];
+
+      const child = spawn('/usr/bin/kdialog', args, { env });
+      let output = '';
+      child.stdout?.on('data', (d) => { output += d.toString(); });
+      child.on('close', (code) => {
+        if (code === 0 && output.trim()) {
+          resolve({ success: true, path: output.trim() });
+        } else {
+          resolve({ success: false, cancelled: true });
+        }
+      });
+      child.on('error', (err) => {
+        resolve({ success: false, error: err.message });
+      });
+      return;
+    }
+
+    if (hasZenity) {
+      const args = isFolder
+        ? ['--file-selection', '--directory', `--filename=${start}/`, `--title=${title}`]
+        : ['--file-selection', `--filename=${start}/`, `--title=${title}`];
+
+      const child = spawn('/usr/bin/zenity', args, { env });
+      let output = '';
+      child.stdout?.on('data', (d) => { output += d.toString(); });
+      child.on('close', (code) => {
+        if (code === 0 && output.trim()) {
+          resolve({ success: true, path: output.trim() });
+        } else {
+          resolve({ success: false, cancelled: true });
+        }
+      });
+      child.on('error', (err) => {
+        resolve({ success: false, error: err.message });
+      });
+      return;
+    }
+
+    resolve({ success: false, error: 'No native dialog tool (kdialog or zenity) found on system.' });
+  });
 }
 

@@ -36,9 +36,38 @@ import {
   Activity,
   Music,
   Gamepad2,
+  FolderOpen,
+  ArrowUp,
+  FileArchive,
+  FileCode,
+  Monitor,
+  Check,
 } from 'lucide-react';
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
+
+interface FsItem {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  isArchive: boolean;
+  isExecutable: boolean;
+  size: number;
+  sizeFormatted: string;
+  modified: number;
+  extension: string;
+}
+
+interface BrowseResult {
+  currentPath: string;
+  parentPath: string;
+  exists: boolean;
+  canWrite: boolean;
+  breadcrumbs: Array<{ name: string; path: string }>;
+  items: FsItem[];
+  quickBookmarks: Array<{ name: string; path: string }>;
+  error?: string;
+}
 
 interface AppItem {
   id: string;
@@ -56,6 +85,9 @@ interface AppItem {
   sizeFormatted?: string;
   status: 'healthy' | 'warning' | 'broken';
   hasSandboxFix?: boolean;
+  isCli?: boolean;
+  cliType?: string;
+  description?: string;
 }
 
 interface UnorganizedItem {
@@ -178,7 +210,47 @@ export function App() {
 
   // Stack manifest export modal
   const [manifestModal, setManifestModal] = useState<{ open: boolean; stackName: string; toml: string } | null>(null);
-  const [modeFilter, setModeFilter] = useState<'all' | 'managed' | 'system'>('all');
+  const [modeFilter, setModeFilter] = useState<'all' | 'managed' | 'desktop' | 'cli'>('all');
+
+  // File Picker & Folder Explorer Modal State
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [pickerType, setPickerType] = useState<'file' | 'folder' | 'any'>('any');
+  const [pickerTitle, setPickerTitle] = useState('Select Package or Folder');
+  const [pickerInitialPath, setPickerInitialPath] = useState('');
+  const [pickerCallback, setPickerCallback] = useState<((path: string) => void) | null>(null);
+
+  const openFilePicker = (
+    title: string,
+    type: 'file' | 'folder' | 'any',
+    initialPath: string,
+    callback: (selectedPath: string) => void
+  ) => {
+    setPickerTitle(title);
+    setPickerType(type);
+    setPickerInitialPath(initialPath || '/opt/Application');
+    setPickerCallback(() => callback);
+    setIsPickerOpen(true);
+  };
+
+  const triggerNativeDialog = async (type: 'file' | 'folder', startDir: string, onSelected: (p: string) => void) => {
+    try {
+      showToast('Opening native file chooser…', 'info');
+      const res = await fetch('/api/fs/native-pick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, startDir }),
+      });
+      const data = await res.json();
+      if (data.success && data.path) {
+        onSelected(data.path);
+        showToast(`Selected: ${data.path}`);
+      } else if (!data.cancelled) {
+        showToast(data.error || 'Native dialog unavailable.', 'error');
+      }
+    } catch (e: any) {
+      showToast(e.message, 'error');
+    }
+  };
 
   // Wizard state
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -191,6 +263,13 @@ export function App() {
   const [wizardError, setWizardError] = useState<string | null>(null);
   const [wizardInstalling, setWizardInstalling] = useState(false);
   const [wizardInstallResult, setWizardInstallResult] = useState<any>(null);
+
+  const handleSourcePathChange = (val: string) => {
+    setWizardSourcePath(val);
+    const cleanVal = val.split('?')[0].split('#')[0];
+    const base = cleanVal.split('/').pop()?.replace(/(\.tar\.gz|\.tgz|\.tar\.xz|\.txz|\.tar\.bz2|\.tbz2|\.tar\.zst|\.zip|\.deb|\.AppImage)$/i, '') || '';
+    if (base) setWizardAppName(base.toLowerCase().replace(/[^a-z0-9_-]/g, '-'));
+  };
 
   // Terminal
   const [termLines, setTermLines] = useState<Array<{ type: 'cmd' | 'output' | 'success' | 'info' | 'error'; text: string }>>([
@@ -286,14 +365,17 @@ export function App() {
 
   const filteredApps = apps.filter(app => {
     const matchesCat = selectedCategory === 'all' || app.category === selectedCategory;
-    const matchesMode = modeFilter === 'all' ||
+    const matchesMode =
+      modeFilter === 'all' ||
       (modeFilter === 'managed' && (app.mode === 'managed' || app.mode === 'linked')) ||
-      (modeFilter === 'system' && app.mode === 'system');
+      (modeFilter === 'desktop' && app.mode === 'system' && !app.isCli) ||
+      (modeFilter === 'cli' && !!app.isCli);
     const q = searchQuery.toLowerCase();
     const matchesSearch = !q ||
       app.name.toLowerCase().includes(q) ||
       app.command.toLowerCase().includes(q) ||
       app.category.toLowerCase().includes(q) ||
+      (app.description && app.description.toLowerCase().includes(q)) ||
       (app.path && app.path.toLowerCase().includes(q));
     return matchesCat && matchesMode && matchesSearch;
   });
@@ -345,6 +427,11 @@ export function App() {
   // ── App actions ───────────────────────────────────────────────────────────
 
   const handleLaunchApp = async (app: AppItem) => {
+    if (app.isCli) {
+      showToast(`Running ${app.name} in docked terminal…`, 'info');
+      runTerminalCommand(`${app.command} --version`);
+      return;
+    }
     showToast(`Launching ${app.name}…`, 'info');
     try {
       const res = await fetch('/api/launch', {
@@ -705,7 +792,7 @@ export function App() {
                     {selectedCategory === 'all' ? 'All Applications' : getCategoryLabel(selectedCategory)}
                   </h1>
                   <span className="view-subtitle">
-                    {filteredApps.length} application{filteredApps.length !== 1 ? 's' : ''} on system · {apps.filter(a => a.mode === 'managed' || a.mode === 'linked').length} managed in /opt/Application, {apps.filter(a => a.mode === 'system').length} system packages
+                    {filteredApps.length} application{filteredApps.length !== 1 ? 's' : ''} on system · {apps.filter(a => a.mode === 'managed' || a.mode === 'linked').length} managed, {apps.filter(a => a.mode === 'system' && !a.isCli).length} desktop, {apps.filter(a => !!a.isCli).length} CLI tools
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -743,14 +830,28 @@ export function App() {
                       style={{
                         padding: '3px 9px',
                         fontSize: '11px',
-                        background: modeFilter === 'system' ? 'var(--accent-gradient)' : 'transparent',
-                        color: modeFilter === 'system' ? '#fff' : 'var(--text-muted)',
+                        background: modeFilter === 'desktop' ? 'var(--accent-gradient)' : 'transparent',
+                        color: modeFilter === 'desktop' ? '#fff' : 'var(--text-muted)',
                         border: 'none',
                         borderRadius: '4px',
                       }}
-                      onClick={() => setModeFilter('system')}
+                      onClick={() => setModeFilter('desktop')}
                     >
-                      System ({apps.filter(a => a.mode === 'system').length})
+                      Desktop ({apps.filter(a => a.mode === 'system' && !a.isCli).length})
+                    </button>
+                    <button
+                      className="sm-btn"
+                      style={{
+                        padding: '3px 9px',
+                        fontSize: '11px',
+                        background: modeFilter === 'cli' ? 'var(--accent-gradient)' : 'transparent',
+                        color: modeFilter === 'cli' ? '#fff' : 'var(--text-muted)',
+                        border: 'none',
+                        borderRadius: '4px',
+                      }}
+                      onClick={() => setModeFilter('cli')}
+                    >
+                      CLI Tools ({apps.filter(a => !!a.isCli).length})
                     </button>
                   </div>
                   <div className="action-btn-group">
@@ -795,10 +896,16 @@ export function App() {
                       >
                         <div className="card-top">
                           <div className="app-icon-mask">
-                            <Icon size={18} />
+                            {app.isCli ? <TermIcon size={18} /> : <Icon size={18} />}
                           </div>
                           <div className="card-meta">
-                            <span className={`mode-badge ${app.mode}`}>{app.mode}</span>
+                            {app.isCli ? (
+                              <span className="mode-badge" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#a5b4fc', border: '1px solid rgba(99, 102, 241, 0.3)' }}>
+                                CLI
+                              </span>
+                            ) : (
+                              <span className={`mode-badge ${app.mode}`}>{app.mode}</span>
+                            )}
                             {app.hasSandboxFix && (
                               <span className="mode-badge" style={{ background: 'var(--success-bg)', color: 'var(--success)', border: '1px solid var(--success-border)' }}>
                                 sandbox ✓
@@ -1257,14 +1364,29 @@ export function App() {
             <div>
               <div className="drawer-section-title">Ownership Mode</div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <span className={`mode-badge ${selectedApp.mode}`}>{selectedApp.mode}</span>
+                {selectedApp.isCli ? (
+                  <span className="mode-badge" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#a5b4fc', border: '1px solid rgba(99, 102, 241, 0.3)' }}>CLI Tool</span>
+                ) : (
+                  <span className={`mode-badge ${selectedApp.mode}`}>{selectedApp.mode}</span>
+                )}
                 <span style={{ fontSize: '11.5px', color: '#9aa3b2' }}>
-                  {selectedApp.mode === 'managed' && 'AppDepot owns files directly under /opt/Application.'}
-                  {selectedApp.mode === 'linked' && 'Physical files at original location, symlinked here.'}
-                  {selectedApp.mode === 'adopted' && 'System-level package tracked in AppDepot registry.'}
+                  {selectedApp.isCli && (selectedApp.description || 'System developer toolchain binary in PATH.')}
+                  {!selectedApp.isCli && selectedApp.mode === 'managed' && 'AppDepot owns files directly under /opt/Application.'}
+                  {!selectedApp.isCli && selectedApp.mode === 'linked' && 'Physical files at original location, symlinked here.'}
+                  {!selectedApp.isCli && selectedApp.mode === 'adopted' && 'System-level package tracked in AppDepot registry.'}
+                  {!selectedApp.isCli && selectedApp.mode === 'system' && 'Standard system package managed via host OS.'}
                 </span>
               </div>
             </div>
+
+            {selectedApp.description && (
+              <div>
+                <div className="drawer-section-title">Description</div>
+                <div style={{ fontSize: '12px', color: '#e2e8f0', lineHeight: '1.4' }}>
+                  {selectedApp.description}
+                </div>
+              </div>
+            )}
 
             <div>
               <div className="drawer-section-title">Disk Usage</div>
@@ -1334,21 +1456,46 @@ export function App() {
             </div>
 
             <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="primary-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => handleLaunchApp(selectedApp)}>
-                  <Play size={14} /><span>Launch App</span>
-                </button>
-                <button className="sm-btn" style={{ justifyContent: 'center', padding: '0 14px' }} onClick={() => handleOpenFolder(selectedApp.path)}>
-                  <Folder size={14} />
-                </button>
-              </div>
-              <button
-                className="sm-btn"
-                style={{ justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--danger)', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}
-                onClick={() => deleteApp(selectedApp)}
-              >
-                <Trash2 size={12} /><span>Remove From System</span>
-              </button>
+              {selectedApp.isCli ? (
+                <>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button className="primary-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => runTerminalCommand(`${selectedApp.command} --version`)}>
+                      <TermIcon size={14} /><span>Run in Terminal</span>
+                    </button>
+                    <button className="sm-btn" style={{ justifyContent: 'center', padding: '0 12px' }} title="View manual/help" onClick={() => runTerminalCommand(`man ${selectedApp.command} || ${selectedApp.command} --help`)}>
+                      <FileText size={14} />
+                    </button>
+                    <button className="sm-btn" style={{ justifyContent: 'center', padding: '0 12px' }} title="Open binary directory" onClick={() => handleOpenFolder(selectedApp.path.split('/').slice(0, -1).join('/'))}>
+                      <Folder size={14} />
+                    </button>
+                  </div>
+                  <button
+                    className="sm-btn"
+                    style={{ justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    onClick={() => adoptApp({ id: selectedApp.id, name: selectedApp.name, path: selectedApp.path, detectedOwner: 'system', suggestedCategory: selectedApp.category, mode: 'linked' })}
+                  >
+                    <Layers size={13} /><span>Link / Track in /opt/Application/{selectedApp.category}</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button className="primary-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => handleLaunchApp(selectedApp)}>
+                      <Play size={14} /><span>Launch App</span>
+                    </button>
+                    <button className="sm-btn" style={{ justifyContent: 'center', padding: '0 14px' }} onClick={() => handleOpenFolder(selectedApp.path)}>
+                      <Folder size={14} />
+                    </button>
+                  </div>
+                  <button
+                    className="sm-btn"
+                    style={{ justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--danger)', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}
+                    onClick={() => deleteApp(selectedApp)}
+                  >
+                    <Trash2 size={12} /><span>Remove From System</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1447,19 +1594,35 @@ export function App() {
                 <div>
                   <div className="wizard-form-group">
                     <label className="wizard-label">Source: Archive path, package, URL, or directory</label>
-                    <input
-                      type="text"
-                      className="wizard-input mono"
-                      value={wizardSourcePath}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setWizardSourcePath(val);
-                        const cleanVal = val.split('?')[0].split('#')[0];
-                        const base = cleanVal.split('/').pop()?.replace(/(\.tar\.gz|\.tgz|\.tar\.xz|\.txz|\.tar\.bz2|\.tbz2|\.tar\.zst|\.zip|\.deb|\.AppImage)$/i, '') || '';
-                        if (base) setWizardAppName(base.toLowerCase().replace(/[^a-z0-9_-]/g, '-'));
-                      }}
-                      placeholder="/path/to/app.tar.xz  or  https://.../tool.tar.gz  or  /opt/myapp"
-                    />
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        className="wizard-input mono"
+                        style={{ flex: 1 }}
+                        value={wizardSourcePath}
+                        onChange={e => handleSourcePathChange(e.target.value)}
+                        placeholder="/path/to/app.tar.xz  or  https://.../tool.tar.gz  or  /opt/myapp"
+                      />
+                      <button
+                        type="button"
+                        className="action-btn"
+                        style={{ padding: '7px 12px', fontSize: '11.5px', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '5px' }}
+                        onClick={() => openFilePicker('Select Archive or Folder to Install', 'any', wizardSourcePath || '/opt/Application', handleSourcePathChange)}
+                      >
+                        <FolderOpen size={14} />
+                        <span>Browse…</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="action-btn"
+                        style={{ padding: '7px 10px', fontSize: '11.5px', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '5px' }}
+                        title="Open native KDE Dolphin file chooser"
+                        onClick={() => triggerNativeDialog('file', wizardSourcePath || '/opt/Application', handleSourcePathChange)}
+                      >
+                        <Monitor size={14} />
+                        <span>Native</span>
+                      </button>
+                    </div>
                     <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
                       Supports: .tar.gz · .tar.xz · .tar.bz2 · .zip · .deb · .AppImage · Remote URLs · directory
                     </div>
@@ -1662,6 +1825,356 @@ export function App() {
           </div>
         </div>
       )}
+      {/* ── Path Picker & Folder Explorer Modal ─────────────────────────────── */}
+      <PathPickerModal
+        isOpen={isPickerOpen}
+        title={pickerTitle}
+        type={pickerType}
+        initialPath={pickerInitialPath}
+        onClose={() => setIsPickerOpen(false)}
+        onSelect={(path) => {
+          if (pickerCallback) pickerCallback(path);
+          setIsPickerOpen(false);
+        }}
+        showToast={showToast}
+      />
+    </div>
+  );
+}
+
+// ── PathPickerModal Component ────────────────────────────────────────────────
+function PathPickerModal({
+  isOpen,
+  title,
+  type,
+  initialPath,
+  onClose,
+  onSelect,
+  showToast,
+}: {
+  isOpen: boolean;
+  title: string;
+  type: 'file' | 'folder' | 'any';
+  initialPath: string;
+  onClose: () => void;
+  onSelect: (path: string) => void;
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+}) {
+  const [currentPath, setCurrentPath] = useState(initialPath || '/opt/Application');
+  const [breadcrumbs, setBreadcrumbs] = useState<Array<{ name: string; path: string }>>([]);
+  const [items, setItems] = useState<FsItem[]>([]);
+  const [quickBookmarks, setQuickBookmarks] = useState<Array<{ name: string; path: string }>>([]);
+  const [selectedPath, setSelectedPath] = useState<string>(initialPath || '/opt/Application');
+  const [searchFilter, setSearchFilter] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // New folder inline state
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
+
+  const loadDirectory = async (target: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/fs/browse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: target }),
+      });
+      const data: BrowseResult = await res.json();
+      if (data.error && (!data.items || data.items.length === 0)) {
+        setError(data.error);
+      }
+      setCurrentPath(data.currentPath);
+      setBreadcrumbs(data.breadcrumbs || []);
+      setItems(data.items || []);
+      setQuickBookmarks(data.quickBookmarks || []);
+      setSelectedPath(data.currentPath);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      loadDirectory(initialPath || '/opt/Application');
+      setShowNewFolder(false);
+      setNewFolderName('');
+    }
+  }, [isOpen, initialPath]);
+
+  if (!isOpen) return null;
+
+  const handleCreateNewFolder = async () => {
+    if (!newFolderName.trim()) return;
+    setCreatingFolder(true);
+    try {
+      const res = await fetch('/api/fs/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentDir: currentPath, folderName: newFolderName }),
+      });
+      const data = await res.json();
+      if (data.success && data.createdPath) {
+        showToast(`Created folder: ${newFolderName}`);
+        setShowNewFolder(false);
+        setNewFolderName('');
+        await loadDirectory(currentPath);
+        setSelectedPath(data.createdPath);
+      } else {
+        showToast(data.error || 'Failed to create directory.', 'error');
+      }
+    } catch (e: any) {
+      showToast(e.message, 'error');
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
+
+  const handleNativeDialogTrigger = async () => {
+    try {
+      const res = await fetch('/api/fs/native-pick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: type === 'folder' ? 'folder' : 'file',
+          startDir: currentPath,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.path) {
+        onSelect(data.path);
+        onClose();
+      }
+    } catch (e: any) {
+      showToast(e.message, 'error');
+    }
+  };
+
+  const filteredItems = items.filter(item =>
+    item.name.toLowerCase().includes(searchFilter.toLowerCase())
+  );
+
+  return (
+    <div className="modal-overlay" style={{ zIndex: 120 }}>
+      <div className="picker-modal-card">
+        {/* Header */}
+        <div className="modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <FolderOpen size={18} style={{ color: 'var(--accent)' }} />
+            <div className="modal-title">{title}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              className="action-btn"
+              style={{ fontSize: '11px', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              title="Open KDE native Dolphin dialog"
+              onClick={handleNativeDialogTrigger}
+            >
+              <Monitor size={13} />
+              <span>Native Dialog</span>
+            </button>
+            <button onClick={onClose} style={{ color: '#9aa3b2', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* Toolbar & Breadcrumbs */}
+        <div className="picker-toolbar">
+          <div className="picker-nav-row">
+            <button
+              className="sm-btn"
+              title="Go to parent directory"
+              disabled={currentPath === '/'}
+              onClick={() => {
+                const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
+                loadDirectory(parent);
+              }}
+              style={{ padding: '5px 8px' }}
+            >
+              <ArrowUp size={14} />
+            </button>
+
+            <div className="picker-breadcrumbs">
+              {breadcrumbs.map((crumb, idx) => (
+                <div key={crumb.path} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button
+                    className={`crumb-btn ${crumb.path === currentPath ? 'active' : ''}`}
+                    onClick={() => loadDirectory(crumb.path)}
+                  >
+                    {crumb.name}
+                  </button>
+                  {idx < breadcrumbs.length - 1 && <span className="crumb-separator">/</span>}
+                </div>
+              ))}
+            </div>
+
+            <button
+              className="primary-btn"
+              style={{ padding: '5px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
+              onClick={() => setShowNewFolder(!showNewFolder)}
+            >
+              <Plus size={13} />
+              <span>New Folder</span>
+            </button>
+          </div>
+
+          {/* Quick Bookmarks */}
+          <div className="picker-bookmarks">
+            <span style={{ fontSize: '11px', color: 'var(--text-dim)', marginRight: '4px' }}>Jump to:</span>
+            {quickBookmarks.map(bm => (
+              <button
+                key={bm.path}
+                className={`bookmark-chip ${currentPath === bm.path ? 'active' : ''}`}
+                onClick={() => loadDirectory(bm.path)}
+              >
+                {bm.name}
+              </button>
+            ))}
+          </div>
+
+          {/* Inline New Folder Creation Bar */}
+          {showNewFolder && (
+            <div className="picker-new-folder-bar">
+              <FolderPlus size={15} style={{ color: 'var(--accent)' }} />
+              <input
+                type="text"
+                autoFocus
+                className="wizard-input mono"
+                style={{ height: '28px', padding: '2px 8px', fontSize: '12px', flex: 1 }}
+                placeholder="Folder name (e.g., custom-tools, v2.4.0)..."
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreateNewFolder(); if (e.key === 'Escape') setShowNewFolder(false); }}
+              />
+              <button
+                className="primary-btn"
+                style={{ padding: '4px 10px', fontSize: '11px' }}
+                disabled={creatingFolder || !newFolderName.trim()}
+                onClick={handleCreateNewFolder}
+              >
+                {creatingFolder ? 'Creating…' : 'Create Folder'}
+              </button>
+              <button
+                className="sm-btn"
+                style={{ padding: '4px 8px', fontSize: '11px' }}
+                onClick={() => setShowNewFolder(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Search filter in current dir */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Search size={13} style={{ position: 'absolute', left: '8px', top: '7px', color: 'var(--text-dim)' }} />
+              <input
+                type="text"
+                className="wizard-input"
+                style={{ height: '26px', paddingLeft: '26px', fontSize: '11.5px', width: '100%' }}
+                placeholder="Filter files and directories in current view..."
+                value={searchFilter}
+                onChange={e => setSearchFilter(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Items List */}
+        <div className="picker-body">
+          {loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--text-muted)' }}>
+              <RotateCw size={18} className="spin" style={{ marginRight: '8px' }} />
+              <span>Reading filesystem directory…</span>
+            </div>
+          ) : error && items.length === 0 ? (
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--danger)' }}>
+              <AlertTriangle size={28} style={{ margin: '0 auto 8px' }} />
+              <div>{error}</div>
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '12px' }}>
+              Directory is empty
+            </div>
+          ) : (
+            <div className="picker-items-table">
+              {filteredItems.map(item => {
+                const isSelected = selectedPath === item.path;
+                return (
+                  <div
+                    key={item.path}
+                    className={`picker-item-row ${isSelected ? 'selected' : ''}`}
+                    onClick={() => setSelectedPath(item.path)}
+                    onDoubleClick={() => {
+                      if (item.isDirectory) {
+                        loadDirectory(item.path);
+                      } else {
+                        onSelect(item.path);
+                        onClose();
+                      }
+                    }}
+                  >
+                    <div className="picker-item-icon">
+                      {item.isDirectory ? (
+                        <Folder size={15} style={{ color: '#38bdf8' }} />
+                      ) : item.isArchive ? (
+                        <FileArchive size={15} style={{ color: '#fbbf24' }} />
+                      ) : item.isExecutable ? (
+                        <FileCode size={15} style={{ color: '#4ade80' }} />
+                      ) : (
+                        <FileText size={15} style={{ color: 'var(--text-muted)' }} />
+                      )}
+                    </div>
+                    <div className="picker-item-name" style={{ fontWeight: item.isDirectory ? 600 : 400 }}>
+                      {item.name}
+                    </div>
+                    {item.isArchive && (
+                      <span className="mode-badge" style={{ background: 'rgba(251, 191, 36, 0.1)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.25)', fontSize: '10px', padding: '1px 5px' }}>
+                        package
+                      </span>
+                    )}
+                    <div className="picker-item-size">{item.sizeFormatted}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="picker-footer">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1, marginRight: '10px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-dim)', flexShrink: 0 }}>Selected:</span>
+            <span className="mono" style={{ fontSize: '11.5px', color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {selectedPath}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+            <button className="sm-btn" onClick={onClose} style={{ padding: '6px 14px' }}>
+              Cancel
+            </button>
+            <button
+              className="primary-btn"
+              disabled={!selectedPath}
+              onClick={() => {
+                onSelect(selectedPath);
+                onClose();
+              }}
+              style={{ padding: '6px 16px' }}
+            >
+              <Check size={14} />
+              <span>Select Path</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
