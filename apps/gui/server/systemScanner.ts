@@ -23,7 +23,7 @@ export interface ScannedApp {
   name: string;
   category: string;
   version: string;
-  mode: 'managed' | 'linked' | 'adopted';
+  mode: 'managed' | 'linked' | 'adopted' | 'system';
   path: string;
   linkPath?: string | null;
   command: string;
@@ -323,6 +323,68 @@ export function scanInstalledApps(): ScannedApp[] {
         });
       }
     }
+  }
+
+  // Step 2: Dynamically discover all system-wide installed desktop software (apt, flatpak, snap)
+  const systemDesktopDirs = [
+    '/usr/share/applications',
+    path.join(USER_HOME, '.local/share/applications'),
+    '/var/lib/flatpak/exports/share/applications',
+    '/var/lib/snapd/desktop/applications',
+  ];
+
+  const seenAppNames = new Set(apps.map(a => a.name.toLowerCase()));
+  const seenIds = new Set(apps.map(a => a.id.toLowerCase()));
+
+  for (const dir of systemDesktopDirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith('.desktop') || f.startsWith('appdepot-') || f.startsWith('mimeinfo') || f.includes('system-') || f.includes('settings')) continue;
+        const desktopFile = path.join(dir, f);
+        try {
+          const content = fs.readFileSync(desktopFile, 'utf-8');
+          if (content.includes('NoDisplay=true') || content.includes('Type=Directory')) continue;
+
+          const nameMatch = content.match(/^Name=(.+)$/m);
+          const execMatch = content.match(/^Exec=(.+)$/m);
+          if (!nameMatch || !execMatch) continue;
+
+          const appName = nameMatch[1].trim();
+          const cleanId = path.basename(f, '.desktop').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+          if (seenAppNames.has(appName.toLowerCase()) || seenIds.has(cleanId)) continue;
+          seenAppNames.add(appName.toLowerCase());
+          seenIds.add(cleanId);
+
+          const execCmd = execMatch[1].trim().split(/\s+/)[0].replace(/["']/g, '');
+          const iconMatch = content.match(/^Icon=(.+)$/m);
+          const detectedIcon = iconMatch ? iconMatch[1].trim() : null;
+
+          const catMatch = content.match(/^Categories=(.+)$/m);
+          const catStr = catMatch ? catMatch[1] : '';
+          const category = inferCategory(appName + ' ' + cleanId + ' ' + catStr);
+
+          apps.push({
+            id: cleanId,
+            name: appName,
+            category,
+            version: 'system',
+            mode: 'system',
+            path: execCmd.startsWith('/') ? execCmd : desktopFile,
+            linkPath: null,
+            command: path.basename(execCmd),
+            execPath: execCmd,
+            desktopPath: desktopFile,
+            iconPath: detectedIcon,
+            artifactsCount: 1,
+            sizeFormatted: 'System Pkg',
+            status: 'healthy',
+            hasSandboxFix: false,
+          });
+        } catch (e) {}
+      }
+    } catch (e) {}
   }
 
   return apps;

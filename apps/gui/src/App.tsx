@@ -45,7 +45,7 @@ interface AppItem {
   name: string;
   category: string;
   version: string;
-  mode: 'managed' | 'linked' | 'adopted';
+  mode: 'managed' | 'linked' | 'adopted' | 'system';
   path: string;
   linkPath?: string | null;
   command: string;
@@ -178,6 +178,7 @@ export function App() {
 
   // Stack manifest export modal
   const [manifestModal, setManifestModal] = useState<{ open: boolean; stackName: string; toml: string } | null>(null);
+  const [modeFilter, setModeFilter] = useState<'all' | 'managed' | 'system'>('all');
 
   // Wizard state
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -285,13 +286,16 @@ export function App() {
 
   const filteredApps = apps.filter(app => {
     const matchesCat = selectedCategory === 'all' || app.category === selectedCategory;
+    const matchesMode = modeFilter === 'all' ||
+      (modeFilter === 'managed' && (app.mode === 'managed' || app.mode === 'linked')) ||
+      (modeFilter === 'system' && app.mode === 'system');
     const q = searchQuery.toLowerCase();
     const matchesSearch = !q ||
       app.name.toLowerCase().includes(q) ||
       app.command.toLowerCase().includes(q) ||
       app.category.toLowerCase().includes(q) ||
       (app.path && app.path.toLowerCase().includes(q));
-    return matchesCat && matchesSearch;
+    return matchesCat && matchesMode && matchesSearch;
   });
 
   const doctorPassed = doctorChecks.filter(c => c.passed).length;
@@ -701,19 +705,64 @@ export function App() {
                     {selectedCategory === 'all' ? 'All Applications' : getCategoryLabel(selectedCategory)}
                   </h1>
                   <span className="view-subtitle">
-                    {filteredApps.length} live package{filteredApps.length !== 1 ? 's' : ''} in /opt/Application
-                    {selectedCategory !== 'all' && `/${selectedCategory}`}
+                    {filteredApps.length} application{filteredApps.length !== 1 ? 's' : ''} on system · {apps.filter(a => a.mode === 'managed' || a.mode === 'linked').length} managed in /opt/Application, {apps.filter(a => a.mode === 'system').length} system packages
                   </span>
                 </div>
-                <div className="action-btn-group">
-                  <button className="sm-btn" onClick={() => fetchAllData(false)}>
-                    <RotateCw size={12} />
-                    <span>Refresh</span>
-                  </button>
-                  <button className="sm-btn" onClick={() => handleOpenFolder('/opt/Application')}>
-                    <Folder size={12} />
-                    <span>Open Root</span>
-                  </button>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.04)', borderRadius: '6px', padding: '2px', border: '1px solid var(--border)' }}>
+                    <button
+                      className="sm-btn"
+                      style={{
+                        padding: '3px 9px',
+                        fontSize: '11px',
+                        background: modeFilter === 'all' ? 'var(--accent-gradient)' : 'transparent',
+                        color: modeFilter === 'all' ? '#fff' : 'var(--text-muted)',
+                        border: 'none',
+                        borderRadius: '4px',
+                      }}
+                      onClick={() => setModeFilter('all')}
+                    >
+                      All ({apps.length})
+                    </button>
+                    <button
+                      className="sm-btn"
+                      style={{
+                        padding: '3px 9px',
+                        fontSize: '11px',
+                        background: modeFilter === 'managed' ? 'var(--accent-gradient)' : 'transparent',
+                        color: modeFilter === 'managed' ? '#fff' : 'var(--text-muted)',
+                        border: 'none',
+                        borderRadius: '4px',
+                      }}
+                      onClick={() => setModeFilter('managed')}
+                    >
+                      Managed ({apps.filter(a => a.mode === 'managed' || a.mode === 'linked').length})
+                    </button>
+                    <button
+                      className="sm-btn"
+                      style={{
+                        padding: '3px 9px',
+                        fontSize: '11px',
+                        background: modeFilter === 'system' ? 'var(--accent-gradient)' : 'transparent',
+                        color: modeFilter === 'system' ? '#fff' : 'var(--text-muted)',
+                        border: 'none',
+                        borderRadius: '4px',
+                      }}
+                      onClick={() => setModeFilter('system')}
+                    >
+                      System ({apps.filter(a => a.mode === 'system').length})
+                    </button>
+                  </div>
+                  <div className="action-btn-group">
+                    <button className="sm-btn" onClick={() => fetchAllData(false)}>
+                      <RotateCw size={12} />
+                      <span>Refresh</span>
+                    </button>
+                    <button className="sm-btn" onClick={() => handleOpenFolder('/opt/Application')}>
+                      <Folder size={12} />
+                      <span>Open Root</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
