@@ -13,6 +13,9 @@ export const KNOWN_CATEGORIES = [
   'ide', 'sdk', 'browsers', 'databases', 'runtimes', 'network', 'office', 'tools', 'games', 'media'
 ];
 
+// In-memory cache for directory disk usage to keep scans instantaneous
+const sizeCache = new Map<string, { size: string; timestamp: number }>();
+
 export interface ScannedApp {
   id: string;
   name: string;
@@ -278,14 +281,21 @@ export function scanInstalledApps(): ScannedApp[] {
           } catch (e) {}
         }
 
-        // Query real disk usage (fast du -sh)
+        // Query real disk usage with 60s cache
         let sizeFormatted = 'Managed';
         if (exists) {
-          try {
-            const duOut = execSync(`du -sh "${physicalPath}" 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 });
-            sizeFormatted = duOut.split(/\s+/)[0] || 'Managed';
-          } catch (e) {
-            sizeFormatted = 'Active';
+          const now = Date.now();
+          const cached = sizeCache.get(physicalPath);
+          if (cached && now - cached.timestamp < 60000) {
+            sizeFormatted = cached.size;
+          } else {
+            try {
+              const duOut = execSync(`du -sh "${physicalPath}" 2>/dev/null`, { encoding: 'utf-8', timeout: 1500 });
+              sizeFormatted = duOut.split(/\s+/)[0] || 'Managed';
+              sizeCache.set(physicalPath, { size: sizeFormatted, timestamp: now });
+            } catch (e) {
+              sizeFormatted = cached ? cached.size : 'Active';
+            }
           }
         }
 
@@ -525,68 +535,73 @@ export function scanRealServices() {
     }
   }
 
-  // Step 4: Query real status and memory for each
+  // Step 4: Query real status, memory, description, and enablement in ONE batch command
   const results: Array<{
     id: string; name: string; unit: string; status: string;
     port: number; memoryMb: number; memoryFormatted: string;
     autostart: boolean; category: string; description: string;
   }> = [];
 
-  for (const svc of appServices) {
-    let status = 'inactive';
-    let memoryMb = 0;
-    let memoryFormatted = '0 MB';
-    let description = '';
-    let autostart = false;
+  if (appServices.length === 0) return results;
 
-    try {
-      const statusOut = execSync(`systemctl is-active ${svc.unit} 2>/dev/null`, { encoding: 'utf-8', timeout: 2000 }).trim();
-      if (statusOut === 'active' || statusOut === 'activating') status = 'active';
-    } catch (e) {
-      status = 'inactive';
-    }
+  const unitMap = new Map<string, { status: string; memoryMb: number; memoryFormatted: string; description: string; autostart: boolean }>();
+  try {
+    const unitList = appServices.map(s => s.unit).join(' ');
+    const batchOut = execSync(`systemctl show ${unitList} --property=Id,ActiveState,UnitFileState,Description,MemoryCurrent 2>/dev/null`, {
+      encoding: 'utf-8',
+      timeout: 3000,
+    });
 
-    if (status === 'active') {
-      // Get real memory usage from systemctl
-      try {
-        const memOut = execSync(`systemctl show ${svc.unit} --property=MemoryCurrent 2>/dev/null`, { encoding: 'utf-8', timeout: 2000 });
-        const memMatch = memOut.match(/MemoryCurrent=(\d+)/);
-        if (memMatch) {
-          const bytes = parseInt(memMatch[1]);
-          if (bytes > 0) {
-            memoryMb = Math.round((bytes / (1024 * 1024)) * 10) / 10;
-            memoryFormatted = memoryMb > 1024
-              ? `${(memoryMb / 1024).toFixed(1)} GB`
-              : `${memoryMb} MB`;
-          }
+    const blocks = batchOut.split(/\n(?=Id=)/);
+    for (const block of blocks) {
+      const idMatch = block.match(/^Id=(.+)$/m);
+      if (!idMatch) continue;
+      const unitId = idMatch[1].trim();
+
+      const stateMatch = block.match(/^ActiveState=(.+)$/m);
+      const activeState = stateMatch ? stateMatch[1].trim() : 'inactive';
+      const status = (activeState === 'active' || activeState === 'activating') ? 'active' : 'inactive';
+
+      const memMatch = block.match(/^MemoryCurrent=(\d+)$/m);
+      let memoryMb = 0;
+      let memoryFormatted = '0 MB';
+      if (memMatch) {
+        const bytes = parseInt(memMatch[1], 10);
+        if (bytes > 0 && !isNaN(bytes)) {
+          memoryMb = Math.round((bytes / (1024 * 1024)) * 10) / 10;
+          memoryFormatted = memoryMb > 1024 ? `${(memoryMb / 1024).toFixed(1)} GB` : `${memoryMb} MB`;
         }
-      } catch (e) {}
+      }
 
-      // Get description
-      try {
-        const descOut = execSync(`systemctl show ${svc.unit} --property=Description 2>/dev/null`, { encoding: 'utf-8', timeout: 1000 });
-        const descMatch = descOut.match(/Description=(.+)/);
-        if (descMatch) description = descMatch[1].trim();
-      } catch (e) {}
+      const descMatch = block.match(/^Description=(.+)$/m);
+      const description = descMatch ? descMatch[1].trim() : '';
+
+      const enableMatch = block.match(/^UnitFileState=(.+)$/m);
+      const autostart = enableMatch ? enableMatch[1].trim() === 'enabled' : false;
+
+      unitMap.set(unitId, { status, memoryMb, memoryFormatted, description, autostart });
     }
+  } catch (e) {}
 
-    // Check autostart/enable state
-    try {
-      const enableOut = execSync(`systemctl is-enabled ${svc.unit} 2>/dev/null`, { encoding: 'utf-8', timeout: 1000 }).trim();
-      autostart = enableOut === 'enabled';
-    } catch (e) {}
-
+  for (const svc of appServices) {
+    const data = unitMap.get(svc.unit) || {
+      status: 'inactive',
+      memoryMb: 0,
+      memoryFormatted: '0 MB',
+      description: '',
+      autostart: false,
+    };
     results.push({
       id: svc.id,
       name: svc.name,
       unit: svc.unit,
-      status,
+      status: data.status,
       port: svc.port,
-      memoryMb,
-      memoryFormatted,
-      autostart,
+      memoryMb: data.memoryMb,
+      memoryFormatted: data.memoryFormatted,
+      autostart: data.autostart,
       category: svc.category,
-      description,
+      description: data.description || svc.name,
     });
   }
 
@@ -1281,7 +1296,32 @@ X-AppDepot-Managed=true
  * Performs REAL uninstallation/removal.
  */
 export function performRealUninstall(appId: string, category: string, mode: string, appPath: string, linkPath?: string | null) {
-  const targetLink = linkPath || appPath || path.join(ROOT_PATH, category, appId);
+  // Sanitize IDs
+  const cleanAppId = path.basename(appId).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+  const cleanCategory = path.basename(category).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+
+  const rawTarget = linkPath || appPath || path.join(ROOT_PATH, cleanCategory, cleanAppId);
+  const targetLink = path.resolve(rawTarget);
+
+  // Security containment check: Must be inside managed app root or user applications
+  const homeDir = process.env.HOME || '/home/besu';
+  const allowedRoots = [
+    path.resolve(ROOT_PATH),
+    path.resolve(USER_ROOT),
+    path.resolve(homeDir, '.local/share/applications'),
+    path.resolve(homeDir, '.local/bin'),
+    path.resolve(homeDir, '.config/appdepot'),
+  ];
+
+  const isSafe = allowedRoots.some(allowed => targetLink === allowed || targetLink.startsWith(allowed + path.sep));
+  if (!isSafe) {
+    throw new Error(`Security Violation: Refusing to delete path outside managed boundaries: ${targetLink}`);
+  }
+
+  // Never allow deleting the root boundary itself
+  if (allowedRoots.includes(targetLink) || targetLink === '/' || targetLink === homeDir) {
+    throw new Error(`Security Violation: Cannot delete root directory: ${targetLink}`);
+  }
 
   if (fs.existsSync(targetLink) || (() => { try { return fs.lstatSync(targetLink).isSymbolicLink(); } catch { return false; } })()) {
     try {
@@ -1297,11 +1337,11 @@ export function performRealUninstall(appId: string, category: string, mode: stri
   }
 
   // Remove desktop entries
-  const userApps = path.join(process.env.HOME || '/home/besu', '.local/share/applications');
+  const userApps = path.join(homeDir, '.local/share/applications');
   const desktopFiles = [
-    path.join(userApps, `appdepot-${appId}.desktop`),
-    path.join(userApps, `${appId}.desktop`),
-    path.join('/usr/share/applications', `appdepot-${appId}.desktop`),
+    path.join(userApps, `appdepot-${cleanAppId}.desktop`),
+    path.join(userApps, `${cleanAppId}.desktop`),
+    path.join('/usr/share/applications', `appdepot-${cleanAppId}.desktop`),
   ];
   desktopFiles.forEach(p => {
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (e) {}
@@ -1310,8 +1350,8 @@ export function performRealUninstall(appId: string, category: string, mode: stri
 
   // Remove binary symlinks
   const binFiles = [
-    path.join(process.env.HOME || '/home/besu', '.local/bin', appId),
-    path.join('/usr/local/bin', appId),
+    path.join(homeDir, '.local/bin', cleanAppId),
+    path.join('/usr/local/bin', cleanAppId),
   ];
   binFiles.forEach(p => {
     try {
@@ -1321,24 +1361,27 @@ export function performRealUninstall(appId: string, category: string, mode: stri
     } catch (e) {}
   });
 
-  return { success: true, removedApp: appId };
+  return { success: true, removedApp: cleanAppId };
 }
 
 /**
  * Adopts an unorganized directory into /opt/Application via symlink.
  */
 export function performRealAdopt(sourcePath: string, category: string, appId: string) {
-  const catDir = path.join(ROOT_PATH, category);
+  const cleanAppId = path.basename(appId).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+  const cleanCategory = path.basename(category).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+
+  const catDir = path.join(ROOT_PATH, cleanCategory);
   fs.mkdirSync(catDir, { recursive: true });
 
-  const targetLink = path.join(catDir, appId);
+  const targetLink = path.join(catDir, cleanAppId);
   try {
     if (fs.existsSync(targetLink) || fs.lstatSync(targetLink).isSymbolicLink()) {
       fs.unlinkSync(targetLink);
     }
   } catch (e) {}
 
-  fs.symlinkSync(sourcePath, targetLink);
+  fs.symlinkSync(path.resolve(sourcePath), targetLink);
   return { success: true, linkPath: targetLink, target: sourcePath };
 }
 
@@ -1346,8 +1389,28 @@ export function performRealAdopt(sourcePath: string, category: string, appId: st
  * Applies a Doctor fix command on the host system.
  */
 export function applyDoctorFix(fixCmd: string): { success: boolean; output: string } {
+  // Security whitelist: only allow recognized repair commands
+  const safePatterns = [
+    /^sudo chmod 2775 \/opt\/Application/,
+    /^sudo mkdir -p \/opt\/Application/,
+    /^mkdir -p \/opt\/Application/,
+    /^chmod 2775 \/opt\/Application/,
+    /^rm -f "\/opt\/Application\//,
+    /^rm -f "\/[^"]+\.local\/share\/applications\//,
+    /^rm -f "\/[^"]+\.local\/bin\//,
+    /^echo 'export PATH=/,
+    /^sudo usermod -aG devtools/,
+    /^pkexec /
+  ];
+
+  const trimmed = fixCmd.trim();
+  const isApproved = safePatterns.some(p => p.test(trimmed));
+  if (!isApproved) {
+    return { success: false, output: 'Security Violation: Fix command is not on the verified repair whitelist.' };
+  }
+
   try {
-    const out = execSync(fixCmd, { encoding: 'utf-8', timeout: 10000 });
+    const out = execSync(trimmed, { encoding: 'utf-8', timeout: 10000 });
     return { success: true, output: out || 'Fix applied successfully.' };
   } catch (e: any) {
     return { success: false, output: e.message || 'Fix command failed.' };
@@ -1372,11 +1435,15 @@ export function launchApp(commandOrPath: string) {
 }
 
 /**
- * Opens a folder in the host file manager.
+ * Opens a folder in the host file manager without invoking subshell.
  */
 export function openFolder(folderPath: string) {
   try {
-    execSync(`xdg-open "${folderPath}" 2>/dev/null || true`);
+    const child = spawn('xdg-open', [folderPath], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message };
