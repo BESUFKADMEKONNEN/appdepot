@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090b10"/>
+      <stop offset="100%" stop-color="#0f141d"/>
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#161b26"/>
+      <stop offset="100%" stop-color="#111620"/>
+    </linearGradient>
+    <linearGradient id="accentBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="accentGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="960" height="480" fill="url(#bgGrad)" rx="12"/>
+  <rect width="958" height="478" x="1" y="1" fill="none" stroke="#252d3d" stroke-width="1" rx="11"/>
+
+  <!-- Header Banner -->
+  <rect x="24" y="24" width="912" height="52" rx="8" fill="#141923" stroke="#252d3d" stroke-width="1"/>
+  <circle cx="50" cy="50" r="14" fill="url(#accentBlue)"/>
+  <text x="50" y="55" fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="bold" text-anchor="middle">📦</text>
+  <text x="76" y="55" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="700">AppDepot Enterprise Linux Control System</text>
+  <text x="440" y="55" fill="#64748b" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12">Architecture &amp; Subsystem Telemetry Map</text>
+  <rect x="800" y="38" width="120" height="24" rx="4" fill="rgba(16, 185, 129, 0.12)" stroke="rgba(16, 185, 129, 0.3)" stroke-width="1"/>
+  <circle cx="814" cy="50" r="4" fill="#10b981"/>
+  <text x="824" y="54" fill="#34d399" font-family="'JetBrains Mono', monospace" font-size="10" font-weight="600">ZERO-HARDCODE</text>
+
+  <!-- Layer 1: Presentation & Workstations -->
+  <g transform="translate(24, 94)">
+    <rect width="288" height="170" rx="8" fill="url(#cardGrad)" stroke="#252d3d" stroke-width="1"/>
+    <rect x="14" y="14" width="260" height="26" rx="4" fill="rgba(56, 189, 248, 0.08)" stroke="rgba(56, 189, 248, 0.2)" stroke-width="1"/>
+    <text x="24" y="31" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700">LAYER 1: ENTERPRISE DESKTOP UI</text>
+    <text x="14" y="60" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600">• React 19 + TypeScript + Vite</text>
+    <text x="14" y="82" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• High-Contrast Dark Slate Design System</text>
+    <text x="14" y="104" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Live Inotify Server-Sent Events (SSE)</text>
+    <text x="14" y="126" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Docked Terminal Shell &amp; Fast Search</text>
+    <text x="14" y="148" fill="#64748b" font-family="'JetBrains Mono', monospace" font-size="10.5">Port 5173 / Socket IPC</text>
+  </g>
+
+  <!-- Layer 2: Real-time Discovery & Process Telemetry -->
+  <g transform="translate(336, 94)">
+    <rect width="288" height="170" rx="8" fill="url(#cardGrad)" stroke="#252d3d" stroke-width="1"/>
+    <rect x="14" y="14" width="260" height="26" rx="4" fill="rgba(16, 185, 129, 0.08)" stroke="rgba(16, 185, 129, 0.2)" stroke-width="1"/>
+    <text x="24" y="31" fill="#34d399" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700">LAYER 2: PROCESS &amp; SERVICE ENGINE</text>
+    <text x="14" y="60" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600">• Live ps Telemetry &amp; Matching Engine</text>
+    <text x="14" y="82" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Signal Dispatcher: SIGTERM &amp; SIGKILL (-9)</text>
+    <text x="14" y="104" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Systemd Unit Manager (Start/Stop/Restart)</text>
+    <text x="14" y="126" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Listening Port Correlator (ss -tulpn)</text>
+    <text x="14" y="148" fill="#64748b" font-family="'JetBrains Mono', monospace" font-size="10.5">Dual-Scope Process Dashboard</text>
+  </g>
+
+  <!-- Layer 3: System Package & Artifact Registry -->
+  <g transform="translate(648, 94)">
+    <rect width="288" height="170" rx="8" fill="url(#cardGrad)" stroke="#252d3d" stroke-width="1"/>
+    <rect x="14" y="14" width="260" height="26" rx="4" fill="rgba(192, 132, 252, 0.08)" stroke="rgba(192, 132, 252, 0.2)" stroke-width="1"/>
+    <text x="24" y="31" fill="#c084fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700">LAYER 3: PACKAGE &amp; LEDGER REGISTRY</text>
+    <text x="14" y="60" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600">• dpkg-query + snap list Integration</text>
+    <text x="14" y="82" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Dynamic $PATH Crawler (Zero Hardcoding)</text>
+    <text x="14" y="104" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Desktop Entry Parser (.desktop &amp; icons)</text>
+    <text x="14" y="126" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5">• Complete Uninstallation Ledger Engine</text>
+    <text x="14" y="148" fill="#64748b" font-family="'JetBrains Mono', monospace" font-size="10.5">2,700+ Packages in &lt;75ms</text>
+  </g>
+
+  <!-- Connectors -->
+  <path d="M 168 264 L 168 290 L 480 290 L 480 300" stroke="#38bdf8" stroke-width="1.5" fill="none" stroke-dasharray="3 3"/>
+  <path d="M 480 264 L 480 300" stroke="#34d399" stroke-width="1.5" fill="none"/>
+  <path d="M 792 264 L 792 290 L 480 290 L 480 300" stroke="#c084fc" stroke-width="1.5" fill="none" stroke-dasharray="3 3"/>
+
+  <!-- Layer 4: Foundation (POSIX Doctor, Core CLI, Polkit Privileged Helper) -->
+  <g transform="translate(24, 304)">
+    <rect width="912" height="152" rx="8" fill="#131722" stroke="#252d3d" stroke-width="1"/>
+    
+    <!-- Sub-block 1: Native Rust CLI & PTY -->
+    <rect x="16" y="16" width="280" height="120" rx="6" fill="#181e2b" stroke="#303848" stroke-width="1"/>
+    <text x="28" y="38" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700">Native Core (Rust / Clap v4)</text>
+    <text x="28" y="58" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• Binary CLI: ./bin/depot</text>
+    <text x="28" y="76" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• PTY Process Supervisor</text>
+    <text x="28" y="94" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• Safe tar / zip-slip extraction engine</text>
+    <text x="28" y="116" fill="#38bdf8" font-family="'JetBrains Mono', monospace" font-size="10.5">Compiled native ELF binary</text>
+
+    <!-- Sub-block 2: POSIX Doctor & Diagnostics -->
+    <rect x="316" y="16" width="280" height="120" rx="6" fill="#181e2b" stroke="#303848" stroke-width="1"/>
+    <text x="328" y="38" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700">POSIX Doctor &amp; Auditing</text>
+    <text x="328" y="58" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• D-001: 2775 devtools root audits</text>
+    <text x="328" y="76" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• D-002: $PATH symlink validation</text>
+    <text x="328" y="94" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• D-006: 4755 chrome-sandbox setuid</text>
+    <text x="328" y="116" fill="#34d399" font-family="'JetBrains Mono', monospace" font-size="10.5">Automated 1-click healing</text>
+
+    <!-- Sub-block 3: Privileged Polkit & Linux Host -->
+    <rect x="616" y="16" width="280" height="120" rx="6" fill="#181e2b" stroke="#303848" stroke-width="1"/>
+    <text x="628" y="38" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700">Linux OS &amp; Security Boundary</text>
+    <text x="628" y="58" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• Least-privilege unprivileged GUI</text>
+    <text x="628" y="76" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• Polkit pkexec escalation for root actions</text>
+    <text x="628" y="94" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11">• systemd &amp; /proc kernel telemetry</text>
+    <text x="628" y="116" fill="#f59e0b" font-family="'JetBrains Mono', monospace" font-size="10.5">Ubuntu, Debian, Fedora, Arch</text>
+  </g>
+</svg>

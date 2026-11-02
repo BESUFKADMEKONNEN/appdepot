@@ -20,10 +20,12 @@
   --text-muted: #94a3b8;
   --text-dim: #64748b;
 
-  /* Refined Crafted Accents */
+  /* Refined Crafted Accents — Professional Linux Enterprise */
   --accent: #38bdf8;
-  --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
-  --accent-glow: rgba(56, 189, 248, 0.22);
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-gradient: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  --accent-glow: rgba(37, 99, 235, 0.18);
 
   /* Status Tokens */
   --success: #10b981;
@@ -34,9 +36,9 @@
   --warning-bg: rgba(245, 158, 11, 0.1);
   --warning-border: rgba(245, 158, 11, 0.25);
 
-  --danger: #f43f5e;
-  --danger-bg: rgba(244, 63, 94, 0.1);
-  --danger-border: rgba(244, 63, 94, 0.25);
+  --danger: #ef4444;
+  --danger-bg: rgba(239, 68, 68, 0.1);
+  --danger-border: rgba(239, 68, 68, 0.25);
 
   /* Application Origin Badges */
   --managed: #38bdf8;

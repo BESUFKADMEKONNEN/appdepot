@@ -6,6 +6,8 @@ Cargo.lock
 # Node / Frontend
 node_modules/
 dist/
+dist-server/
+dist-release/
 .vite/
 npm-debug.log*
 yarn-debug.log*

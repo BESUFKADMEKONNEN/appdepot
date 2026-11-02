@@ -20,6 +20,10 @@ import {
   browseDirectory,
   createDirectory,
   pickNativePath,
+  scanSystemPackages,
+  controlService,
+  terminateAppProcess,
+  scanLiveProcesses,
   ROOT_PATH,
   USER_ROOT,
   USER_HOME,
@@ -42,37 +46,6 @@ function appDepotApiPlugin() {
     });
   };
 
-  // Watch both /opt/Application AND ~/Applications for live changes
-  const watchPaths = [ROOT_PATH, USER_ROOT];
-  for (const watchPath of watchPaths) {
-    try {
-      if (fs.existsSync(watchPath)) {
-        fs.watch(watchPath, { recursive: true }, (eventType, filename) => {
-          broadcast('fs_change', { eventType, filename, root: watchPath, time: Date.now() });
-        });
-      }
-    } catch (e) {
-      console.warn('[AppDepot] Watcher init warning for', watchPath, e);
-    }
-  }
-
-  // Also watch /usr/local/bin for symlink changes
-  try {
-    fs.watch('/usr/local/bin', (eventType, filename) => {
-      broadcast('fs_change', { eventType, filename, root: '/usr/local/bin', time: Date.now() });
-    });
-  } catch (e) {}
-
-  // Also watch ~/.local/share/applications for desktop entry changes
-  const userApps = path.join(USER_HOME, '.local/share/applications');
-  try {
-    if (fs.existsSync(userApps)) {
-      fs.watch(userApps, (eventType, filename) => {
-        broadcast('fs_change', { eventType, filename, root: userApps, time: Date.now() });
-      });
-    }
-  } catch (e) {}
-
   const parseJsonBody = (req: any): Promise<any> =>
     new Promise((resolve, reject) => {
       let body = '';
@@ -82,9 +55,57 @@ function appDepotApiPlugin() {
       });
     });
 
+  const watchPaths = [ROOT_PATH, USER_ROOT];
+
   return {
     name: 'appdepot-api',
     configureServer(server: any) {
+      // Watch both /opt/Application AND ~/Applications for live changes (dev server only)
+      for (const watchPath of watchPaths) {
+        try {
+          if (fs.existsSync(watchPath)) {
+            fs.watch(watchPath, { recursive: true }, (eventType, filename) => {
+              broadcast('fs_change', { eventType, filename, root: watchPath, time: Date.now() });
+            });
+          }
+        } catch (e) {
+          console.warn('[AppDepot] Watcher init warning for', watchPath, e);
+        }
+      }
+
+      // Also watch /usr/local/bin for symlink changes
+      try {
+        fs.watch('/usr/local/bin', (eventType, filename) => {
+          broadcast('fs_change', { eventType, filename, root: '/usr/local/bin', time: Date.now() });
+        });
+      } catch {}
+
+      // Also watch ~/.local/share/applications for desktop entry changes
+      const userApps = path.join(USER_HOME, '.local/share/applications');
+      try {
+        if (fs.existsSync(userApps)) {
+          fs.watch(userApps, (eventType, filename) => {
+            broadcast('fs_change', { eventType, filename, root: userApps, time: Date.now() });
+          });
+        }
+      } catch {}
+
+      // Security: Loopback Origin & CSRF Guard for all mutating POST requests
+      server.middlewares.use((req: any, res: any, next: any) => {
+        if (req.method === 'POST' && req.url && req.url.startsWith('/api/')) {
+          const origin = req.headers['origin'] || '';
+          const referer = req.headers['referer'] || '';
+          const isLoopbackOrigin = !origin || origin.includes('127.0.0.1') || origin.includes('localhost');
+          const isLoopbackReferer = !referer || referer.includes('127.0.0.1') || referer.includes('localhost');
+          if (!isLoopbackOrigin || !isLoopbackReferer) {
+            res.statusCode = 403;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: '403 Forbidden: Cross-origin request blocked.', success: false }));
+            return;
+          }
+        }
+        next();
+      });
 
       // ── 1. Live SSE stream ──────────────────────────────────────────
       server.middlewares.use('/api/events', (req: any, res: any) => {
@@ -99,7 +120,21 @@ function appDepotApiPlugin() {
       });
 
       // ── 2. Real installed apps ──────────────────────────────────────
-      server.middlewares.use('/api/apps', (_req: any, res: any) => {
+      server.middlewares.use('/api/apps', async (req: any, res: any) => {
+        if (req.url && req.url.includes('/kill')) {
+          if (req.method !== 'POST') return;
+          try {
+            const body = await parseJsonBody(req);
+            const result = terminateAppProcess(body.pid || body.command || '', body.signal || 'SIGTERM');
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(result));
+            broadcast('fs_change', { eventType: 'process_kill', time: Date.now() });
+          } catch (e: any) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: false, output: e.message }));
+          }
+          return;
+        }
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(scanInstalledApps()));
       });
@@ -111,9 +146,49 @@ function appDepotApiPlugin() {
       });
 
       // ── 4. Real systemd services ────────────────────────────────────
-      server.middlewares.use('/api/services', (_req: any, res: any) => {
+      server.middlewares.use('/api/services', async (req: any, res: any) => {
+        if (req.url && req.url.includes('/control')) {
+          if (req.method !== 'POST') return;
+          try {
+            const body = await parseJsonBody(req);
+            const result = controlService(body.unit || '', body.action || '');
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(result));
+            if (result.success) broadcast('fs_change', { eventType: 'service_state', unit: body.unit, time: Date.now() });
+          } catch (e: any) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: false, output: e.message }));
+          }
+          return;
+        }
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(scanRealServices()));
+      });
+
+      // ── 4b. Complete System Packages (apt/dpkg + snap) ──────────────
+      server.middlewares.use('/api/packages', (_req: any, res: any) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(scanSystemPackages()));
+      });
+
+      // ── 4c. Live Host Processes (applications & daemons) ────────────
+      server.middlewares.use('/api/processes', async (req: any, res: any) => {
+        if (req.url && req.url.includes('/kill')) {
+          if (req.method !== 'POST') return;
+          try {
+            const body = await parseJsonBody(req);
+            const result = terminateAppProcess(body.pid || body.command || '', body.signal || 'SIGTERM');
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(result));
+            broadcast('fs_change', { eventType: 'process_kill', time: Date.now() });
+          } catch (e: any) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: false, output: e.message }));
+          }
+          return;
+        }
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(scanLiveProcesses()));
       });
 
       // ── 5. Doctor diagnostics ───────────────────────────────────────
@@ -245,8 +320,14 @@ function appDepotApiPlugin() {
         if (req.method !== 'POST') return;
         try {
           const body = await parseJsonBody(req);
+          const result = launchApp(body.command);
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify(launchApp(body.command)));
+          res.end(JSON.stringify(result));
+          if (result.success) {
+            setTimeout(() => {
+              broadcast('fs_change', { eventType: 'app_launch', command: body.command, time: Date.now() });
+            }, 600);
+          }
         } catch (e: any) {
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: e.message, success: false }));
