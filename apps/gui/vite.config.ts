@@ -19,6 +19,7 @@ import {
   exportStackManifest,
   ROOT_PATH,
   USER_ROOT,
+  USER_HOME,
 } from './server/systemScanner.ts';
 import { exec } from 'child_process';
 import fs from 'fs';
@@ -60,7 +61,7 @@ function appDepotApiPlugin() {
   } catch (e) {}
 
   // Also watch ~/.local/share/applications for desktop entry changes
-  const userApps = path.join(process.env.HOME || '/home/besu', '.local/share/applications');
+  const userApps = path.join(USER_HOME, '.local/share/applications');
   try {
     if (fs.existsSync(userApps)) {
       fs.watch(userApps, (eventType, filename) => {
@@ -282,7 +283,7 @@ function appDepotApiPlugin() {
             return;
           }
 
-          const homeDir = process.env.HOME || '/home/besu';
+          const homeDir = USER_HOME;
           const customEnv = {
             ...process.env,
             HOME: homeDir,

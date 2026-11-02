@@ -1,9 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { execSync, spawn } from 'child_process';
 
+export const USER_HOME = process.env.HOME || os.homedir();
 export const ROOT_PATH = '/opt/Application';
-export const USER_ROOT = path.join(process.env.HOME || '/home/besu', 'Applications');
+export const USER_ROOT = path.join(USER_HOME, 'Applications');
 export const PROJECT_ROOT = fs.existsSync(path.resolve(process.cwd(), 'Cargo.toml'))
   ? process.cwd()
   : path.resolve(process.cwd(), '../..');
@@ -204,13 +206,13 @@ export function scanInstalledApps(): ScannedApp[] {
 
         // Check for real command symlink in /usr/local/bin or ~/.local/bin
         const binLinkSystem = path.join('/usr/local/bin', item);
-        const binLinkUser = path.join(process.env.HOME || '/home/besu', '.local/bin', item);
+        const binLinkUser = path.join(USER_HOME, '.local/bin', item);
         const hasBinLink = fs.existsSync(binLinkSystem) || fs.existsSync(binLinkUser);
 
         // Check for real desktop entry
         const desktopPaths = [
-          path.join(process.env.HOME || '/home/besu', '.local/share/applications', `appdepot-${item}.desktop`),
-          path.join(process.env.HOME || '/home/besu', '.local/share/applications', `${item}.desktop`),
+          path.join(USER_HOME, '.local/share/applications', `appdepot-${item}.desktop`),
+          path.join(USER_HOME, '.local/share/applications', `${item}.desktop`),
           path.join('/usr/share/applications', `appdepot-${item}.desktop`),
           path.join('/usr/share/applications', `${item}.desktop`),
         ];
@@ -327,9 +329,34 @@ export function scanInstalledApps(): ScannedApp[] {
 }
 
 /**
- * Scans for unorganized applications from:
- * 1. Directories in /opt that are not yet linked to /opt/Application
- * 2. Archives in fixtures/ and ~/Downloads
+ * Infers an appropriate AppDepot category dynamically from a name or description.
+ */
+function inferCategory(text: string): string {
+  const lower = text.toLowerCase();
+  if (/code|ide|editor|studio|vim|emacs|sublime|clion|pycharm|intellij|webstorm|antigravity/.test(lower)) return 'ide';
+  if (/sdk|flutter|dart|go|golang|rust|cargo|jdk|dotnet|toolchain/.test(lower)) return 'sdk';
+  if (/chrome|firefox|brave|edge|opera|browser|web/.test(lower)) return 'browsers';
+  if (/sql|db|postgres|mysql|redis|mongo|mariadb|sqlite|dbeaver|database/.test(lower)) return 'databases';
+  if (/node|python|java|php|ruby|perl|runtime|venv/.test(lower)) return 'runtimes';
+  if (/net|vpn|wireguard|tailscale|network|postman|insomnia|curl|wireshark|mesh/.test(lower)) return 'network';
+  if (/office|libreoffice|calc|writer|document|pdf/.test(lower)) return 'office';
+  if (/game|steam|lutris|wine|minecraft/.test(lower)) return 'games';
+  if (/media|audio|video|vlc|mpv|gimp|inkscape|obs|blender|sound/.test(lower)) return 'media';
+  return 'tools';
+}
+
+function formatAppName(raw: string): string {
+  return raw
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase())
+    .trim();
+}
+
+/**
+ * Dynamically discovers unorganized applications across the host system:
+ * 1. Vendor packages in /opt
+ * 2. Standalone downloads in ~/Downloads and ~/Applications
+ * 3. Real installed desktop software from system and user .desktop directories
  */
 export function scanUnorganizedApps() {
   const unorganized: Array<{
@@ -342,103 +369,106 @@ export function scanUnorganizedApps() {
   }> = [];
 
   const registeredPaths = new Set<string>();
+  const registeredIds = new Set<string>();
 
-  // Collect registered paths
-  if (fs.existsSync(ROOT_PATH)) {
-    for (const cat of fs.readdirSync(ROOT_PATH)) {
-      const catPath = path.join(ROOT_PATH, cat);
-      try {
-        if (!fs.statSync(catPath).isDirectory()) continue;
-        for (const item of fs.readdirSync(catPath)) {
-          const itemPath = path.join(catPath, item);
-          try {
-            if (fs.lstatSync(itemPath).isSymbolicLink()) {
-              const resolved = fs.readlinkSync(itemPath);
-              registeredPaths.add(resolved);
-              // Also add resolved path from root for relative symlinks
-              if (!path.isAbsolute(resolved)) {
-                registeredPaths.add(path.resolve(path.dirname(itemPath), resolved));
+  // Collect registered paths from ROOT_PATH and USER_ROOT
+  const roots = [ROOT_PATH, USER_ROOT];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    try {
+      for (const cat of fs.readdirSync(root)) {
+        const catPath = path.join(root, cat);
+        try {
+          if (!fs.statSync(catPath).isDirectory()) continue;
+          for (const item of fs.readdirSync(catPath)) {
+            if (item.startsWith('.')) continue;
+            registeredIds.add(item.toLowerCase());
+            const itemPath = path.join(catPath, item);
+            try {
+              if (fs.lstatSync(itemPath).isSymbolicLink()) {
+                const resolved = fs.readlinkSync(itemPath);
+                registeredPaths.add(resolved);
+                if (!path.isAbsolute(resolved)) {
+                  registeredPaths.add(path.resolve(path.dirname(itemPath), resolved));
+                }
+              } else {
+                registeredPaths.add(itemPath);
               }
-            } else {
-              registeredPaths.add(itemPath);
-            }
-          } catch (e) {}
-        }
-      } catch (e) {}
-    }
+            } catch (e) {}
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
   }
 
-  // Scan /opt for external software not yet registered
+  // 1. Scan /opt for external software not yet registered
   if (fs.existsSync('/opt')) {
-    for (const item of fs.readdirSync('/opt')) {
-      if (item === 'Application' || item === '.' || item === '..') continue;
-      const fullPath = path.join('/opt', item);
+    try {
+      for (const item of fs.readdirSync('/opt')) {
+        if (item === 'Application' || item.startsWith('.')) continue;
+        const fullPath = path.join('/opt', item);
+        try {
+          const st = fs.lstatSync(fullPath);
+          if (!st.isDirectory() && !st.isSymbolicLink()) continue;
+        } catch (e) { continue; }
 
-      // Check if it's a directory or symlink to something worth managing
-      try {
-        const st = fs.lstatSync(fullPath);
-        if (!st.isDirectory() && !st.isSymbolicLink()) continue;
-      } catch (e) { continue; }
+        if (!registeredPaths.has(fullPath) && !registeredIds.has(item.toLowerCase())) {
+          let owner = 'vendor package (/opt)';
+          try {
+            const dpkgOut = execSync(`dpkg -S "${fullPath}" 2>/dev/null`, { encoding: 'utf-8', timeout: 1500 });
+            owner = dpkgOut.split(':')[0].trim();
+          } catch (e) {}
 
-      let isLinked = false;
-      for (const reg of registeredPaths) {
-        if (reg === fullPath || reg.startsWith(fullPath + '/')) {
-          isLinked = true;
-          break;
+          unorganized.push({
+            id: item,
+            name: formatAppName(item),
+            path: fullPath,
+            detectedOwner: owner,
+            suggestedCategory: inferCategory(item),
+            mode: 'linked',
+          });
         }
       }
+    } catch (e) {}
+  }
 
-      if (!isLinked) {
-        let owner = 'vendor package (/opt)';
-        try {
-          const dpkgOut = execSync(`dpkg -S "${fullPath}" 2>/dev/null`, { encoding: 'utf-8', timeout: 2000 });
-          owner = dpkgOut.split(':')[0].trim();
-        } catch (e) {}
-
-        // Suggest a category based on the app name
-        const nameLower = item.toLowerCase();
-        let suggestedCategory = 'tools';
-        if (nameLower.includes('office') || nameLower.includes('libreoffice') || nameLower.includes('document')) {
-          suggestedCategory = 'office';
-        } else if (nameLower.includes('chrome') || nameLower.includes('firefox') || nameLower.includes('browser')) {
-          suggestedCategory = 'browsers';
-        } else if (nameLower.includes('code') || nameLower.includes('idea') || nameLower.includes('editor') || nameLower.includes('studio')) {
-          suggestedCategory = 'ide';
-        } else if (nameLower.includes('java') || nameLower.includes('node') || nameLower.includes('python')) {
-          suggestedCategory = 'runtimes';
-        } else if (nameLower.includes('mysql') || nameLower.includes('postgres') || nameLower.includes('mongo') || nameLower.includes('redis')) {
-          suggestedCategory = 'databases';
-        } else if (nameLower.includes('vpn') || nameLower.includes('proxy') || nameLower.includes('network')) {
-          suggestedCategory = 'network';
-        } else if (nameLower.includes('sdk') || nameLower.includes('flutter') || nameLower.includes('dart') || nameLower.includes('go')) {
-          suggestedCategory = 'sdk';
-        }
-
+  // 2. Scan user Applications folder (USER_ROOT)
+  if (fs.existsSync(USER_ROOT)) {
+    try {
+      for (const item of fs.readdirSync(USER_ROOT)) {
+        if (item.startsWith('.')) continue;
+        const fullPath = path.join(USER_ROOT, item);
+        if (registeredPaths.has(fullPath) || registeredIds.has(item.toLowerCase())) continue;
         unorganized.push({
           id: item,
-          name: item.charAt(0).toUpperCase() + item.slice(1).replace(/[-_]/g, ' '),
+          name: formatAppName(item),
           path: fullPath,
-          detectedOwner: owner,
-          suggestedCategory,
+          detectedOwner: 'user application (~/Applications)',
+          suggestedCategory: inferCategory(item),
           mode: 'linked',
         });
       }
-    }
+    } catch (e) {}
   }
 
-  // Scan project fixtures/ for test synthetic archives
-  const fixturesDir = path.join(PROJECT_ROOT, 'fixtures');
-  if (fs.existsSync(fixturesDir)) {
+  // 3. Scan user Downloads for standalone AppImages, .deb, or archives
+  const downloadsDir = path.join(USER_HOME, 'Downloads');
+  if (fs.existsSync(downloadsDir)) {
     try {
-      for (const f of fs.readdirSync(fixturesDir)) {
-        if (f.endsWith('.tar.gz') || f.endsWith('.tgz') || f.endsWith('.zip') || f.endsWith('.AppImage')) {
-          const baseName = f.replace(/(\.tar\.gz|\.tgz|\.zip|\.AppImage)$/i, '');
+      for (const f of fs.readdirSync(downloadsDir)) {
+        if (f.endsWith('.AppImage') || f.endsWith('.tar.gz') || f.endsWith('.tar.xz') || f.endsWith('.zip') || f.endsWith('.deb')) {
+          const baseName = f.replace(/(\.AppImage|\.tar\.gz|\.tar\.xz|\.zip|\.deb)$/i, '')
+            .replace(/[-_]linux.*/i, '')
+            .replace(/[-_]x86_64.*/i, '')
+            .replace(/[-_]amd64.*/i, '');
+          const cleanId = baseName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+          if (registeredIds.has(cleanId) || unorganized.some(u => u.id === cleanId)) continue;
           unorganized.push({
-            id: baseName.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-            name: baseName.charAt(0).toUpperCase() + baseName.slice(1).replace(/[-_]/g, ' '),
-            path: path.join(fixturesDir, f),
-            detectedOwner: 'synthetic test fixture',
-            suggestedCategory: baseName.toLowerCase().includes('electron') || baseName.toLowerCase().includes('ide') ? 'ide' : 'sdk',
+            id: cleanId,
+            name: formatAppName(baseName),
+            path: path.join(downloadsDir, f),
+            detectedOwner: 'standalone download archive',
+            suggestedCategory: inferCategory(baseName),
             mode: 'managed',
           });
         }
@@ -446,25 +476,36 @@ export function scanUnorganizedApps() {
     } catch (e) {}
   }
 
-  // Scan user Downloads for standalone AppImages or archives
-  const downloadsDir = path.join(process.env.HOME || '/home/besu', 'Downloads');
-  if (fs.existsSync(downloadsDir)) {
+  // 4. Scan real system and user installed desktop applications
+  const appDirs = [path.join(USER_HOME, '.local/share/applications'), '/usr/share/applications'];
+  for (const dir of appDirs) {
+    if (!fs.existsSync(dir)) continue;
     try {
-      for (const f of fs.readdirSync(downloadsDir)) {
-        if (f.endsWith('.AppImage') || f.endsWith('.tar.gz') || f.endsWith('.zip')) {
-          const baseName = f.replace(/(\.AppImage|\.tar\.gz|\.zip)$/i, '')
-            .replace(/[-_]linux.*/i, '')
-            .replace(/[-_]x86_64.*/i, '')
-            .replace(/[-_]amd64.*/i, '');
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith('.desktop') || f.startsWith('appdepot-') || f.startsWith('mimeinfo') || f.includes('system-') || f.includes('settings')) continue;
+        const fullPath = path.join(dir, f);
+        try {
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          if (content.includes('NoDisplay=true') || content.includes('Type=Directory')) continue;
+          const nameMatch = content.match(/^Name=(.+)$/m);
+          const execMatch = content.match(/^Exec=(.+)$/m);
+          if (!nameMatch || !execMatch) continue;
+
+          const appName = nameMatch[1].trim();
+          const execCmd = execMatch[1].trim().split(/\s+/)[0].replace(/["']/g, '');
+          const id = path.basename(f, '.desktop').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+          if (registeredIds.has(id) || unorganized.some(u => u.id === id || u.name === appName)) continue;
+
           unorganized.push({
-            id: baseName.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-            name: baseName.charAt(0).toUpperCase() + baseName.slice(1),
-            path: path.join(downloadsDir, f),
-            detectedOwner: 'standalone download',
-            suggestedCategory: 'tools',
-            mode: 'managed',
+            id,
+            name: appName,
+            path: execCmd.startsWith('/') ? execCmd : fullPath,
+            detectedOwner: dir.startsWith('/usr') ? 'system desktop package' : 'user desktop package',
+            suggestedCategory: inferCategory(appName + ' ' + id),
+            mode: 'linked',
           });
-        }
+        } catch (e) {}
       }
     } catch (e) {}
   }
@@ -473,76 +514,104 @@ export function scanUnorganizedApps() {
 }
 
 /**
- * Dynamically discovers ALL running systemd services related to managed applications,
- * plus database/development services. Not hardcoded to mysql/postgres.
+ * Dynamically discovers ALL real running & installed systemd services without hardcoded mappings.
  */
 export function scanRealServices() {
-  // Step 1: Discover services associated with managed apps in /opt/Application
   const appServices: Array<{
     id: string; name: string; unit: string;
     port: number; category: string;
   }> = [];
 
-  // Well-known service mappings by app name pattern
-  const wellKnownMap: Record<string, { unit: string; port: number; name: string }> = {
-    'mysql': { unit: 'mysql.service', port: 3306, name: 'MySQL Community Server' },
-    'postgresql': { unit: 'postgresql.service', port: 5432, name: 'PostgreSQL Database' },
-    'postgresql-bin': { unit: 'postgresql.service', port: 5432, name: 'PostgreSQL Database' },
-    'postgres': { unit: 'postgresql.service', port: 5432, name: 'PostgreSQL Database' },
-    'redis': { unit: 'redis-server.service', port: 6379, name: 'Redis Server' },
-    'mongodb': { unit: 'mongod.service', port: 27017, name: 'MongoDB Database' },
-    'nginx': { unit: 'nginx.service', port: 80, name: 'Nginx Web Server' },
-    'apache2': { unit: 'apache2.service', port: 80, name: 'Apache HTTP Server' },
-    'docker': { unit: 'docker.service', port: 2375, name: 'Docker Daemon' },
-    'containerd': { unit: 'containerd.service', port: 0, name: 'Containerd' },
-  };
-
   const seenUnits = new Set<string>();
 
-  // Step 2: Match installed apps to known services
-  if (fs.existsSync(ROOT_PATH)) {
-    for (const cat of fs.readdirSync(ROOT_PATH)) {
-      const catPath = path.join(ROOT_PATH, cat);
-      try {
-        if (!fs.statSync(catPath).isDirectory()) continue;
-        for (const item of fs.readdirSync(catPath)) {
-          if (item.startsWith('.')) continue;
-          const nameLower = item.toLowerCase();
-          for (const [key, mapping] of Object.entries(wellKnownMap)) {
-            if (nameLower === key || nameLower.startsWith(key) || nameLower.includes(key)) {
-              if (!seenUnits.has(mapping.unit)) {
-                seenUnits.add(mapping.unit);
-                appServices.push({ id: item, name: mapping.name, unit: mapping.unit, port: mapping.port, category: cat });
+  // 1. Discover all live active/running system services dynamically
+  try {
+    const listOut = execSync('systemctl list-units --type=service --state=running,active --no-legend --no-pager 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 3000,
+    });
+    for (const line of listOut.trim().split('\n')) {
+      if (!line.trim()) continue;
+      const parts = line.trim().split(/\s+/);
+      const unit = parts[0];
+      if (!unit || !unit.endsWith('.service')) continue;
+
+      // Filter out low-level OS kernel/plumbing units
+      if (unit.startsWith('systemd-') || unit.startsWith('emergency.') || unit.startsWith('rescue.') ||
+          unit.startsWith('kmod-') || unit.startsWith('console-') || unit.startsWith('getty@') ||
+          unit.startsWith('user@') || unit.startsWith('session-') || unit.startsWith('dbus-') ||
+          unit.startsWith('plymouth-')) {
+        continue;
+      }
+
+      const id = unit.replace('.service', '');
+      const rawDesc = parts.slice(4).join(' ').trim();
+      const name = rawDesc || formatAppName(id);
+      const category = inferCategory(id + ' ' + rawDesc);
+
+      seenUnits.add(unit);
+      appServices.push({ id, name, unit, port: 0, category });
+    }
+  } catch (e) {}
+
+  // 2. Discover services related to managed/installed applications in ROOT_PATH and USER_ROOT
+  const roots = [ROOT_PATH, USER_ROOT];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    try {
+      for (const cat of fs.readdirSync(root)) {
+        const catPath = path.join(root, cat);
+        try {
+          if (!fs.statSync(catPath).isDirectory()) continue;
+          for (const item of fs.readdirSync(catPath)) {
+            if (item.startsWith('.')) continue;
+            const candidateUnits = [`${item}.service`, `${item}-server.service`, `${item}d.service`];
+            for (const cand of candidateUnits) {
+              if (!seenUnits.has(cand)) {
+                try {
+                  execSync(`systemctl list-unit-files ${cand} 2>/dev/null | grep -q ${cand}`, { timeout: 1000 });
+                  seenUnits.add(cand);
+                  appServices.push({
+                    id: item,
+                    name: formatAppName(item),
+                    unit: cand,
+                    port: 0,
+                    category: cat,
+                  });
+                  break;
+                } catch (e) {}
               }
-              break;
             }
           }
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+
+  // 3. Dynamically map listening ports from live ss socket telemetry
+  const portMap = new Map<string, number>();
+  try {
+    const ssOut = execSync('ss -tulpn 2>/dev/null', { encoding: 'utf-8', timeout: 2000 });
+    for (const line of ssOut.split('\n')) {
+      const match = line.match(/:(\d+)\s+.*users:\(\("([^"]+)"/);
+      if (match) {
+        const port = parseInt(match[1], 10);
+        const proc = match[2].toLowerCase();
+        if (port > 0 && proc) {
+          portMap.set(proc, port);
         }
-      } catch (e) {}
+      }
     }
-  }
+  } catch (e) {}
 
-  // Step 3: Also scan well-known services on the system (even if not in /opt/Application)
-  for (const [, mapping] of Object.entries(wellKnownMap)) {
-    if (!seenUnits.has(mapping.unit)) {
-      // Check if the service unit exists on the system
-      try {
-        execSync(`systemctl list-unit-files ${mapping.unit} 2>/dev/null | grep -q ${mapping.unit}`, { timeout: 1000 });
-        seenUnits.add(mapping.unit);
-        const id = mapping.unit.replace('.service', '');
-        appServices.push({ id, name: mapping.name, unit: mapping.unit, port: mapping.port, category: 'databases' });
-      } catch (e) {}
-    }
-  }
+  if (appServices.length === 0) return [];
 
-  // Step 4: Query real status, memory, description, and enablement in ONE batch command
+  // 4. Query real status, memory, description, and enablement in ONE batch command
   const results: Array<{
     id: string; name: string; unit: string; status: string;
     port: number; memoryMb: number; memoryFormatted: string;
     autostart: boolean; category: string; description: string;
   }> = [];
-
-  if (appServices.length === 0) return results;
 
   const unitMap = new Map<string, { status: string; memoryMb: number; memoryFormatted: string; description: string; autostart: boolean }>();
   try {
@@ -591,12 +660,25 @@ export function scanRealServices() {
       description: '',
       autostart: false,
     };
+
+    // Match listening port dynamically
+    let detectedPort = svc.port;
+    if (!detectedPort) {
+      const svcNameLower = svc.id.toLowerCase();
+      for (const [proc, port] of portMap.entries()) {
+        if (proc.includes(svcNameLower) || svcNameLower.includes(proc)) {
+          detectedPort = port;
+          break;
+        }
+      }
+    }
+
     results.push({
       id: svc.id,
-      name: svc.name,
+      name: data.description || svc.name,
       unit: svc.unit,
       status: data.status,
-      port: svc.port,
+      port: detectedPort,
       memoryMb: data.memoryMb,
       memoryFormatted: data.memoryFormatted,
       autostart: data.autostart,
@@ -771,7 +853,7 @@ export function runRealDoctor() {
 
   // D-003: Symlinks in /usr/local/bin and ~/.local/bin
   let dangling: string[] = [];
-  const binPaths = ['/usr/local/bin', path.join(process.env.HOME || '/home/besu', '.local/bin')];
+  const binPaths = ['/usr/local/bin', path.join(USER_HOME, '.local/bin')];
   for (const binPath of binPaths) {
     if (fs.existsSync(binPath)) {
       for (const f of fs.readdirSync(binPath)) {
@@ -798,7 +880,7 @@ export function runRealDoctor() {
   // D-004: Orphaned .desktop files (appdepot-managed desktop entries whose target is gone)
   const desktopDirs = [
     '/usr/share/applications',
-    path.join(process.env.HOME || '/home/besu', '.local/share/applications'),
+    path.join(USER_HOME, '.local/share/applications'),
   ];
   const orphanedDesktop: string[] = [];
   for (const dir of desktopDirs) {
@@ -891,7 +973,7 @@ export function runRealDoctor() {
   const hasLoader = fs.existsSync(loaderPath);
 
   // Also check if ~/.local/bin is in PATH
-  const localBin = path.join(process.env.HOME || '/home/besu', '.local/bin');
+  const localBin = path.join(USER_HOME, '.local/bin');
   const pathVar = process.env.PATH || '';
   const localBinInPath = pathVar.split(':').includes(localBin);
 
@@ -1046,8 +1128,8 @@ export function analyzeSource(sourcePath: string, appName: string, category: str
       iconCandidate: null,
       suggestedCategory: category || 'tools',
       targetDir: path.join(ROOT_PATH, category || 'tools', appName),
-      desktopDest: path.join(process.env.HOME || '/home/besu', '.local/share/applications', `appdepot-${appName}.desktop`),
-      binDest: path.join(process.env.HOME || '/home/besu', '.local/bin', appName),
+      desktopDest: path.join(USER_HOME, '.local/share/applications', `appdepot-${appName}.desktop`),
+      binDest: path.join(USER_HOME, '.local/bin', appName),
       isAppImage: sourcePath.toLowerCase().endsWith('.appimage'),
     };
   }
@@ -1132,8 +1214,8 @@ export function analyzeSource(sourcePath: string, appName: string, category: str
   if (!detectedExec) detectedExec = appName;
 
   const targetDir = path.join(ROOT_PATH, category, appName);
-  const desktopDest = path.join(process.env.HOME || '/home/besu', '.local/share/applications', `appdepot-${appName}.desktop`);
-  const binDest = path.join(process.env.HOME || '/home/besu', '.local/bin', appName);
+  const desktopDest = path.join(USER_HOME, '.local/share/applications', `appdepot-${appName}.desktop`);
+  const binDest = path.join(USER_HOME, '.local/bin', appName);
 
   return {
     valid: true,
@@ -1244,7 +1326,7 @@ export function performRealInstall(sourceArchive: string, category: string, appN
   const bestIcon = findBestIcon(targetDir, appName);
 
   // 4. Create .desktop file with real Icon reference
-  const userApps = path.join(process.env.HOME || '/home/besu', '.local/share/applications');
+  const userApps = path.join(USER_HOME, '.local/share/applications');
   fs.mkdirSync(userApps, { recursive: true });
   const desktopDest = path.join(userApps, `appdepot-${appName}.desktop`);
   const iconLine = bestIcon ? `Icon=${bestIcon}\n` : '';
@@ -1269,7 +1351,7 @@ X-AppDepot-Managed=true
   } catch (e) {}
 
   // 5. Create command symlink in ~/.local/bin
-  const userBin = path.join(process.env.HOME || '/home/besu', '.local/bin');
+  const userBin = path.join(USER_HOME, '.local/bin');
   fs.mkdirSync(userBin, { recursive: true });
   const binLink = path.join(userBin, appName);
   try { fs.unlinkSync(binLink); } catch (e) {}
@@ -1282,7 +1364,7 @@ X-AppDepot-Managed=true
 
   // 6. Write environment fragment in ~/.config/appdepot/env.d
   try {
-    const envD = path.join(process.env.HOME || '/home/besu', '.config/appdepot/env.d');
+    const envD = path.join(USER_HOME, '.config/appdepot/env.d');
     fs.mkdirSync(envD, { recursive: true });
     const envFrag = path.join(envD, `${appName}.sh`);
     const varName = appName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
@@ -1304,7 +1386,7 @@ export function performRealUninstall(appId: string, category: string, mode: stri
   const targetLink = path.resolve(rawTarget);
 
   // Security containment check: Must be inside managed app root or user applications
-  const homeDir = process.env.HOME || '/home/besu';
+  const homeDir = USER_HOME;
   const allowedRoots = [
     path.resolve(ROOT_PATH),
     path.resolve(USER_ROOT),

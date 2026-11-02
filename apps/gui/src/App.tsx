@@ -622,7 +622,7 @@ export function App() {
                     <Icon size={15} />
                     <span>{item.label}</span>
                   </div>
-                  <span className="nav-count" style={item.warn ? { color: '#f5b54a' } : {}}>
+                  <span className="nav-count" style={item.warn ? { color: 'var(--warning)' } : {}}>
                     {item.id === 'doctor' ? (healthScore === 100 ? '✓' : item.count) : item.count}
                   </span>
                 </button>
@@ -637,7 +637,7 @@ export function App() {
               <button
                 title="Create new category in /opt/Application"
                 onClick={() => setShowCreateCat(true)}
-                style={{ background: 'none', border: 'none', color: '#3daee9', cursor: 'pointer', padding: '2px', display: 'flex' }}
+                style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: '2px', display: 'flex' }}
               >
                 <FolderPlus size={13} />
               </button>
@@ -751,7 +751,7 @@ export function App() {
                           <div className="card-meta">
                             <span className={`mode-badge ${app.mode}`}>{app.mode}</span>
                             {app.hasSandboxFix && (
-                              <span className="mode-badge" style={{ background: 'rgba(61,214,140,0.15)', color: '#3dd68c' }}>
+                              <span className="mode-badge" style={{ background: 'var(--success-bg)', color: 'var(--success)', border: '1px solid var(--success-border)' }}>
                                 sandbox ✓
                               </span>
                             )}
@@ -763,7 +763,7 @@ export function App() {
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
                           <span className="version-tag">{app.version}</span>
-                          <span className="version-tag" style={{ background: 'rgba(59,130,246,0.12)', color: '#60a5fa' }}>
+                          <span className="version-tag" style={{ background: 'rgba(56, 189, 248, 0.08)', color: 'var(--accent)', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
                             {app.sizeFormatted || '…'}
                           </span>
                         </div>
@@ -771,7 +771,7 @@ export function App() {
                         <div className="card-footer">
                           <div className="status-indicator">
                             <div className="status-dot" style={{
-                              background: app.status === 'healthy' ? '#3dd68c' : app.status === 'warning' ? '#f5b54a' : '#ef4444'
+                              background: app.status === 'healthy' ? 'var(--success)' : app.status === 'warning' ? 'var(--warning)' : 'var(--danger)'
                             }} />
                             <span>{app.status}</span>
                           </div>
@@ -987,12 +987,12 @@ export function App() {
                             {srv.status}
                           </span>
                           {srv.autostart && (
-                            <span className="mode-badge" style={{ fontSize: '10px', background: 'rgba(59,130,246,0.12)', color: '#60a5fa' }}>
+                            <span className="mode-badge" style={{ fontSize: '10px', background: 'rgba(56, 189, 248, 0.08)', color: 'var(--accent)', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
                               autostart
                             </span>
                           )}
                         </div>
-                        <div className="service-unit mono" style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                        <div className="service-unit mono" style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>
                           {srv.unit}
                           {srv.port > 0 && ` · Port :${srv.port}`}
                           {srv.description && ` · ${srv.description}`}
@@ -1001,8 +1001,8 @@ export function App() {
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                         {srv.status === 'active' && srv.memoryMb > 0 && (
-                          <div style={{ fontSize: '11.5px', color: '#9aa3b2', textAlign: 'right' }}>
-                            <div style={{ fontWeight: 600, color: '#e6e8ec' }}>{srv.memoryFormatted || `${srv.memoryMb} MB`}</div>
+                          <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', textAlign: 'right' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--text)' }}>{srv.memoryFormatted || `${srv.memoryMb} MB`}</div>
                             <div style={{ fontSize: '10px' }}>RSS Memory</div>
                           </div>
                         )}
@@ -1295,7 +1295,7 @@ export function App() {
               </div>
               <button
                 className="sm-btn"
-                style={{ justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px', color: '#ff6b6b' }}
+                style={{ justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--danger)', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}
                 onClick={() => deleteApp(selectedApp)}
               >
                 <Trash2 size={12} /><span>Remove From System</span>
@@ -1315,7 +1315,7 @@ export function App() {
                 Create Category Directory
               </div>
               <button onClick={() => { setShowCreateCat(false); setNewCatName(''); setCreateCatError(null); }}
-                style={{ color: '#9aa3b2' }}>
+                style={{ color: 'var(--text-muted)' }}>
                 <X size={18} />
               </button>
             </div>
@@ -1334,18 +1334,18 @@ export function App() {
                 />
               </div>
 
-              <div style={{ background: '#14161a', padding: '10px 12px', borderRadius: '6px', fontSize: '11.5px' }}>
-                <div style={{ color: '#9aa3b2' }}>Will create:</div>
-                <div className="mono" style={{ color: '#3daee9', marginTop: '4px' }}>
+              <div style={{ background: 'rgba(0, 0, 0, 0.3)', border: '1px solid var(--border)', padding: '10px 12px', borderRadius: '6px', fontSize: '11.5px' }}>
+                <div style={{ color: 'var(--text-muted)' }}>Will create:</div>
+                <div className="mono" style={{ color: 'var(--accent)', marginTop: '4px' }}>
                   /opt/Application/{newCatName || '<name>'}
                 </div>
-                <div style={{ color: '#6b7280', marginTop: '4px', fontSize: '10.5px' }}>
+                <div style={{ color: 'var(--text-dim)', marginTop: '4px', fontSize: '10.5px' }}>
                   chmod 2775, group devtools inherited from parent
                 </div>
               </div>
 
               {createCatError && (
-                <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid #ef4444', color: '#ef4444', padding: '8px 12px', borderRadius: '6px', fontSize: '12px' }}>
+                <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', color: 'var(--danger)', padding: '8px 12px', borderRadius: '6px', fontSize: '12px' }}>
                   {createCatError}
                 </div>
               )}
@@ -1478,13 +1478,13 @@ export function App() {
               {wizardStep === 3 && wizardAnalysis && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ fontWeight: 600, marginBottom: '4px' }}>Planned filesystem operations:</div>
-                  <div style={{ background: '#14161a', padding: '14px', borderRadius: '8px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ background: 'rgba(0, 0, 0, 0.3)', border: '1px solid var(--border)', padding: '14px', borderRadius: '8px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {[
-                      { label: '1. Extract payload →', val: wizardAnalysis.targetDir, color: '#3dd68c' },
-                      { label: '2. chmod +x →', val: `${wizardAnalysis.targetDir}/${wizardAnalysis.mainExecutable}`, color: '#3daee9' },
-                      { label: '3. Desktop entry →', val: wizardAnalysis.desktopDest, color: '#a78bfa' },
-                      { label: '4. Command symlink →', val: wizardAnalysis.binDest, color: '#60a5fa' },
-                      ...(wizardAnalysis.hasSandbox ? [{ label: '5. Setuid sandbox →', val: 'sudo chmod 4755 chrome-sandbox', color: '#f5b54a' }] : []),
+                      { label: '1. Extract payload →', val: wizardAnalysis.targetDir, color: 'var(--success)' },
+                      { label: '2. chmod +x →', val: `${wizardAnalysis.targetDir}/${wizardAnalysis.mainExecutable}`, color: 'var(--accent)' },
+                      { label: '3. Desktop entry →', val: wizardAnalysis.desktopDest, color: 'var(--linked)' },
+                      { label: '4. Command symlink →', val: wizardAnalysis.binDest, color: 'var(--accent)' },
+                      ...(wizardAnalysis.hasSandbox ? [{ label: '5. Setuid sandbox →', val: 'sudo chmod 4755 chrome-sandbox', color: 'var(--warning)' }] : []),
                     ].map(({ label, val, color }) => (
                       <div key={label} style={{ color }}>
                         <strong>{label}</strong>{' '}
@@ -1498,17 +1498,17 @@ export function App() {
               {/* Step 4: Result */}
               {wizardStep === 4 && (
                 <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                  <CheckCircle2 size={46} color="#3dd68c" style={{ margin: '0 auto 12px' }} />
+                  <CheckCircle2 size={46} color="var(--success)" style={{ margin: '0 auto 12px' }} />
                   <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Installed Successfully!</h3>
-                  <p style={{ fontSize: '12px', color: '#9aa3b2', marginTop: '6px' }}>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
                     Live inotify detected the new package. Desktop shortcut and command symlink are active.
                   </p>
                   {wizardInstallResult && (
-                    <div style={{ marginTop: '16px', textAlign: 'left', background: '#14161a', padding: '12px', borderRadius: '8px', fontSize: '11px' }}>
-                      <div style={{ color: '#3dd68c' }}>✓ Files: {wizardInstallResult.installedPath}</div>
-                      <div style={{ color: '#3daee9' }}>✓ Binary: {wizardInstallResult.execPath}</div>
-                      <div style={{ color: '#a78bfa' }}>✓ Desktop: {wizardInstallResult.desktopPath}</div>
-                      <div style={{ color: '#60a5fa' }}>✓ Link: {wizardInstallResult.binLink}</div>
+                    <div style={{ marginTop: '16px', textAlign: 'left', background: 'rgba(0, 0, 0, 0.3)', border: '1px solid var(--border)', padding: '12px', borderRadius: '8px', fontSize: '11px' }}>
+                      <div style={{ color: 'var(--success)' }}>✓ Files: {wizardInstallResult.installedPath}</div>
+                      <div style={{ color: 'var(--accent)' }}>✓ Binary: {wizardInstallResult.execPath}</div>
+                      <div style={{ color: 'var(--linked)' }}>✓ Desktop: {wizardInstallResult.desktopPath}</div>
+                      <div style={{ color: 'var(--accent)' }}>✓ Link: {wizardInstallResult.binLink}</div>
                     </div>
                   )}
                 </div>
