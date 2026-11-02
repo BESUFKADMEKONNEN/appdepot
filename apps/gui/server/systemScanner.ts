@@ -1803,7 +1803,11 @@ export function applyDoctorFix(fixCmd: string): { success: boolean; output: stri
  */
 export function launchApp(commandOrPath: string) {
   try {
-    const child = spawn(commandOrPath, [], {
+    const trimmed = commandOrPath.trim();
+    // Prefix with exec so the subshell replaces itself directly with the target executable,
+    // avoiding an extra lingering /bin/sh wrapper process in the tree
+    const finalCmd = trimmed.startsWith('exec ') ? trimmed : `exec ${trimmed}`;
+    const child = spawn(finalCmd, [], {
       detached: true,
       stdio: 'ignore',
       shell: true,
@@ -2195,19 +2199,76 @@ export function controlService(unit: string, action: string): { success: boolean
 }
 
 /**
- * Gracefully stops or terminates a running application process.
+ * Gracefully stops or terminates a running application process and its entire process tree.
+ * Automatically signals child processes, process groups, and escalates to SIGKILL if hung.
  */
-export function terminateAppProcess(pidOrCommand: number | string, signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): { success: boolean; output: string } {
+export function terminateAppProcess(
+  pidOrCommand: number | string,
+  signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM',
+  fallbackCommand?: string
+): { success: boolean; output: string } {
   try {
     const sigNum = signal === 'SIGKILL' ? '-9' : '-15';
-    if (typeof pidOrCommand === 'number' || /^\d+$/.test(String(pidOrCommand))) {
-      const pid = parseInt(String(pidOrCommand), 10);
-      execSync(`kill ${sigNum} ${pid} 2>/dev/null`, { timeout: 3000 });
-      return { success: true, output: `Process ${pid} signal ${signal} sent.` };
+    let targetPid: number | null = null;
+
+    if (typeof pidOrCommand === 'number' || /^\d+$/.test(String(pidOrCommand).trim())) {
+      targetPid = parseInt(String(pidOrCommand).trim(), 10);
+    }
+
+    if (targetPid && targetPid > 1) {
+      // 1. Terminate all child processes of the PID first
+      try { execSync(`pkill ${sigNum} -P ${targetPid} 2>/dev/null`, { timeout: 1500 }); } catch {}
+
+      // 2. Terminate the process group (if negative PGID exists and is not root PID 1)
+      try {
+        const pgidOut = execSync(`ps -o pgid= -p ${targetPid} 2>/dev/null`, { encoding: 'utf-8', timeout: 1000 }).trim();
+        const pgid = parseInt(pgidOut, 10);
+        if (pgid && pgid > 1) {
+          execSync(`kill ${sigNum} -${pgid} 2>/dev/null`, { timeout: 1500 });
+        }
+      } catch {}
+
+      // 3. Terminate the target PID itself
+      try { execSync(`kill ${sigNum} ${targetPid} 2>/dev/null`, { timeout: 1500 }); } catch {}
+
+      // 4. If command name provided, also sweep any matching sibling threads/instances
+      if (fallbackCommand) {
+        const cleanBase = path.basename(fallbackCommand.trim().split(/\s+/)[0]).replace(/[^a-zA-Z0-9_.-]/g, '');
+        if (cleanBase && !['sh', 'bash', 'node', 'systemd', 'init'].includes(cleanBase)) {
+          try { execSync(`pkill ${sigNum} -x "${cleanBase}" 2>/dev/null`, { timeout: 1500 }); } catch {}
+        }
+      }
+
+      // 5. Auto-escalation watchdog: if SIGTERM was sent but process ignores it / hangs, force kill (-9) after 350ms
+      if (signal === 'SIGTERM') {
+        const cmdClean = fallbackCommand ? path.basename(fallbackCommand.trim().split(/\s+/)[0]).replace(/[^a-zA-Z0-9_.-]/g, '') : '';
+        const sweepCmd = cmdClean && !['sh', 'bash', 'node', 'systemd', 'init'].includes(cmdClean)
+          ? `pkill -9 -x "${cmdClean}" 2>/dev/null; `
+          : '';
+        spawn('sh', ['-c', `sleep 0.35 && (kill -0 ${targetPid} 2>/dev/null && (kill -9 ${targetPid} 2>/dev/null; pkill -9 -P ${targetPid} 2>/dev/null; ${sweepCmd}))`], {
+          detached: true,
+          stdio: 'ignore'
+        }).unref();
+      }
+
+      return { success: true, output: `Process tree for PID ${targetPid} terminated (${signal}).` };
     } else {
-      const cleanCmd = String(pidOrCommand).replace(/[^a-zA-Z0-9_.-]/g, '');
-      execSync(`pkill ${sigNum} -f "${cleanCmd}" 2>/dev/null`, { timeout: 3000 });
-      return { success: true, output: `Process ${cleanCmd} signal ${signal} sent.` };
+      // Terminate by command name
+      const cmdToKill = String(fallbackCommand || pidOrCommand || '').trim();
+      const cleanCmd = path.basename(cmdToKill.split(/\s+/)[0]).replace(/[^a-zA-Z0-9_.-]/g, '');
+      if (!cleanCmd || ['sh', 'bash', 'node', 'systemd', 'init'].includes(cleanCmd)) {
+        return { success: false, output: 'Invalid or protected command name.' };
+      }
+      execSync(`pkill ${sigNum} -f "${cleanCmd}" 2>/dev/null`, { timeout: 2000 });
+
+      if (signal === 'SIGTERM') {
+        spawn('sh', ['-c', `sleep 0.35 && pgrep -f "${cleanCmd}" >/dev/null 2>&1 && pkill -9 -f "${cleanCmd}" 2>/dev/null`], {
+          detached: true,
+          stdio: 'ignore'
+        }).unref();
+      }
+
+      return { success: true, output: `Process ${cleanCmd} terminated (${signal}).` };
     }
   } catch (e: any) {
     return { success: false, output: e.message || 'Failed to terminate process.' };

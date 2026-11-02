@@ -125,7 +125,7 @@ function appDepotApiPlugin() {
           if (req.method !== 'POST') return;
           try {
             const body = await parseJsonBody(req);
-            const result = terminateAppProcess(body.pid || body.command || '', body.signal || 'SIGTERM');
+            const result = terminateAppProcess(body.pid || body.command || '', body.signal || 'SIGTERM', body.command);
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify(result));
             broadcast('fs_change', { eventType: 'process_kill', time: Date.now() });
@@ -177,7 +177,7 @@ function appDepotApiPlugin() {
           if (req.method !== 'POST') return;
           try {
             const body = await parseJsonBody(req);
-            const result = terminateAppProcess(body.pid || body.command || '', body.signal || 'SIGTERM');
+            const result = terminateAppProcess(body.pid || body.command || '', body.signal || 'SIGTERM', body.command);
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify(result));
             broadcast('fs_change', { eventType: 'process_kill', time: Date.now() });
