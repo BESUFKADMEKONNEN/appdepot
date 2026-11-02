@@ -10,6 +10,7 @@ pub mod fsx;
 pub mod plan;
 pub mod shortcut;
 pub mod sources;
+pub mod typo;
 
 pub use appdepot_types as types;
 

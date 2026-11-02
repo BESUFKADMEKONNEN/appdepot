@@ -3,6 +3,9 @@
 //! Transforms messy vendor tarballs into first-class system packages with
 //! ranked launchers, crisp desktop icons, and automated permission fixes.
 
+use std::fs::File;
+use std::io::Read;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 /// Scored candidate executable discovered in an extracted package.
@@ -26,6 +29,17 @@ pub struct CandidateIcon {
 pub struct Heuristics;
 
 impl Heuristics {
+    /// Checks if a file has the standard ELF binary magic bytes (\x7fELF).
+    pub fn is_elf_binary(path: &Path) -> bool {
+        if let Ok(mut file) = File::open(path) {
+            let mut magic = [0u8; 4];
+            if file.read_exact(&mut magic).is_ok() {
+                return magic == [0x7f, b'E', b'L', b'F'];
+            }
+        }
+        false
+    }
+
     /// Scores an executable candidate according to Section 10.1 of the specification.
     pub fn score_executable(
         path: &Path,
@@ -58,9 +72,9 @@ impl Heuristics {
 
         // 3. Normalized basename matches app ID
         if lower_name == app_id_lower {
-            score += 25;
-        } else if lower_name.contains(&app_id_lower) {
-            score += 15;
+            score += 35;
+        } else if lower_name.contains(&app_id_lower) || app_id_lower.contains(&lower_name) {
+            score += 20;
         }
 
         // 4. Penalize helper binaries, crashpad, uninstallers, and shared libraries
@@ -71,8 +85,9 @@ impl Heuristics {
             || lower_name.starts_with("update")
             || lower_name.ends_with(".so")
             || lower_name.contains(".so.")
+            || lower_name.ends_with(".pak")
         {
-            score -= 60;
+            score -= 80;
         }
 
         // 5. Directory depth penalty
@@ -90,13 +105,13 @@ impl Heuristics {
             || path_str.contains("/resources/")
             || path_str.contains("/node_modules/")
         {
-            score -= 20;
+            score -= 25;
         }
 
         score
     }
 
-    /// Evaluates if an icon path should be excluded according to Rule 4.
+    /// Evaluates if an icon path should be excluded.
     pub fn is_excluded_icon_path(rel_path: &Path) -> bool {
         let s = rel_path.to_string_lossy().to_lowercase();
         s.contains("extensions/")
@@ -128,16 +143,19 @@ impl Heuristics {
         };
 
         // Prefer SVG vector icons
-        if file_name.ends_with(".svg") {
+        let is_svg = file_name.ends_with(".svg");
+        if is_svg {
             score += 50;
         } else if file_name.ends_with(".png") {
             score += 30;
+        } else {
+            return -100;
         }
 
         // Name matches app ID or common icon names
         let app_id_lower = app_id.to_lowercase();
         if file_name.starts_with(&app_id_lower) {
-            score += 30;
+            score += 35;
         } else if file_name.starts_with("icon") || file_name.starts_with("logo") || file_name.starts_with("app") {
             score += 20;
         }
@@ -153,6 +171,108 @@ impl Heuristics {
         score
     }
 
+    /// Recursively discovers and ranks all candidate executables in an installation directory.
+    pub fn discover_executables(root_dir: &Path, app_id: &str) -> Vec<CandidateExecutable> {
+        let mut candidates = Vec::new();
+        Self::scan_executables_recursive(root_dir, root_dir, app_id, 0, &mut candidates);
+        candidates.sort_by(|a, b| b.score.cmp(&a.score));
+        candidates
+    }
+
+    fn scan_executables_recursive(
+        dir: &Path,
+        root_dir: &Path,
+        app_id: &str,
+        depth: usize,
+        out: &mut Vec<CandidateExecutable>,
+    ) {
+        if depth > 5 {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let dname = entry.file_name().to_string_lossy().to_string();
+                if dname.starts_with('.') || dname == "node_modules" || dname == "test" || dname == "docs" {
+                    continue;
+                }
+                Self::scan_executables_recursive(&p, root_dir, app_id, depth + 1, out);
+            } else if p.is_file() {
+                let is_elf = Self::is_elf_binary(&p);
+                let is_exec_mode = entry
+                    .metadata()
+                    .map(|m| (m.permissions().mode() & 0o111) != 0)
+                    .unwrap_or(false);
+
+                // Consider if ELF or executable permission
+                if is_elf || is_exec_mode {
+                    let score = Self::score_executable(&p, root_dir, app_id, is_elf, is_exec_mode);
+                    let relative_path = p.strip_prefix(root_dir).unwrap_or(&p).to_path_buf();
+                    out.push(CandidateExecutable {
+                        path: p,
+                        relative_path,
+                        score,
+                        is_elf,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Recursively discovers and ranks all candidate icons in an installation directory.
+    pub fn discover_icons(root_dir: &Path, app_id: &str) -> Vec<CandidateIcon> {
+        let mut candidates = Vec::new();
+        Self::scan_icons_recursive(root_dir, root_dir, app_id, 0, &mut candidates);
+        candidates.sort_by(|a, b| b.score.cmp(&a.score));
+        candidates
+    }
+
+    fn scan_icons_recursive(
+        dir: &Path,
+        root_dir: &Path,
+        app_id: &str,
+        depth: usize,
+        out: &mut Vec<CandidateIcon>,
+    ) {
+        if depth > 5 {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let dname = entry.file_name().to_string_lossy().to_string();
+                if dname.starts_with('.') || dname == "node_modules" {
+                    continue;
+                }
+                Self::scan_icons_recursive(&p, root_dir, app_id, depth + 1, out);
+            } else if p.is_file() {
+                let fname = entry.file_name().to_string_lossy().to_lowercase();
+                if fname.ends_with(".svg") || fname.ends_with(".png") {
+                    let score = Self::score_icon(&p, root_dir, app_id);
+                    if score > 0 {
+                        let relative_path = p.strip_prefix(root_dir).unwrap_or(&p).to_path_buf();
+                        out.push(CandidateIcon {
+                            path: p,
+                            relative_path,
+                            is_svg: fname.ends_with(".svg"),
+                            score,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     /// Checks if a package contains the Chromium setuid sandbox helper.
     pub fn detect_chromium_sandbox(app_dir: &Path) -> Option<PathBuf> {
         let sandbox_candidate = app_dir.join("chrome-sandbox");
@@ -161,5 +281,47 @@ impl Heuristics {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_score_executable_priorities() {
+        let root = Path::new("/opt/Application/ide/antigravity");
+        let main_bin = root.join("antigravity");
+        let crashpad = root.join("chrome_crashpad_handler");
+        let helper = root.join("resources/helper");
+
+        let score_main = Heuristics::score_executable(&main_bin, root, "antigravity", true, true);
+        let score_crash = Heuristics::score_executable(&crashpad, root, "antigravity", true, true);
+        let score_helper = Heuristics::score_executable(&helper, root, "antigravity", false, true);
+
+        assert!(score_main > 100);
+        assert!(score_crash < 50);
+        assert!(score_main > score_crash);
+        assert!(score_main > score_helper);
+    }
+
+    #[test]
+    fn test_discover_executables() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let bin_dir = root.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+
+        let app_exec = bin_dir.join("myapp");
+        std::fs::write(&app_exec, b"#!/bin/sh\necho hi\n").unwrap();
+        let mut perms = std::fs::metadata(&app_exec).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&app_exec, perms).unwrap();
+
+        let candidates = Heuristics::discover_executables(root, "myapp");
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].path, app_exec);
     }
 }

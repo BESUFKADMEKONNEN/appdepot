@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './App.css';
 import {
   Package,
@@ -30,8 +30,15 @@ import {
   Trash2,
   Copy,
   ExternalLink,
-  HardDrive
+  HardDrive,
+  FolderPlus,
+  Zap,
+  Activity,
+  Music,
+  Gamepad2,
 } from 'lucide-react';
+
+// ─── Type Definitions ────────────────────────────────────────────────────────
 
 interface AppItem {
   id: string;
@@ -64,183 +71,277 @@ interface ServiceItem {
   id: string;
   name: string;
   unit: string;
-  status: 'active' | 'inactive';
+  status: string;
   port: number;
   memoryMb: number;
+  memoryFormatted: string;
   autostart: boolean;
+  category: string;
+  description: string;
 }
 
-interface DoctorCheckItem {
+interface StackItem {
+  id: string;
+  name: string;
+  description: string;
+  members: Array<{ appId: string; name: string; path: string; status: string }>;
+  status: 'complete' | 'partial' | 'missing';
+}
+
+interface DoctorCheck {
   code: string;
   title: string;
   detail: string;
   passed: boolean;
+  fixable?: boolean;
+  fixCmd?: string;
 }
 
-const CATEGORIES = [
-  { id: 'all', label: 'All Applications', icon: Layers },
-  { id: 'ide', label: 'IDEs & Editors', icon: Code2 },
-  { id: 'sdk', label: 'SDKs & Toolchains', icon: Box },
-  { id: 'browsers', label: 'Web Browsers', icon: Globe },
-  { id: 'databases', label: 'Databases', icon: Database },
-  { id: 'runtimes', label: 'Runtimes', icon: Cpu },
-  { id: 'network', label: 'Network & VPN', icon: Wifi },
-  { id: 'office', label: 'Office & Docs', icon: FileText },
-  { id: 'tools', label: 'System Tools', icon: Wrench },
-];
+interface CategoryInfo {
+  id: string;
+  path: string;
+  exists: boolean;
+  appCount: number;
+}
+
+// ─── Category icon mapping ────────────────────────────────────────────────────
+
+const CATEGORY_ICONS: Record<string, any> = {
+  ide: Code2,
+  sdk: Box,
+  browsers: Globe,
+  databases: Database,
+  runtimes: Cpu,
+  network: Wifi,
+  office: FileText,
+  tools: Wrench,
+  games: Gamepad2,
+  media: Music,
+  'npm-global': Package,
+  default: Folder,
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  ide: 'IDEs & Editors',
+  sdk: 'SDKs & Toolchains',
+  browsers: 'Web Browsers',
+  databases: 'Databases',
+  runtimes: 'Runtimes',
+  network: 'Network & VPN',
+  office: 'Office & Docs',
+  tools: 'System Tools',
+  games: 'Games',
+  media: 'Media & Audio',
+  'npm-global': 'npm Globals',
+};
+
+function getCategoryIcon(catId: string) {
+  return CATEGORY_ICONS[catId] || CATEGORY_ICONS.default;
+}
+
+function getCategoryLabel(catId: string) {
+  return CATEGORY_LABELS[catId] || (catId.charAt(0).toUpperCase() + catId.slice(1).replace(/-/g, ' '));
+}
+
+// ─── App Component ───────────────────────────────────────────────────────────
 
 export function App() {
+  // Core data state — ALL from live backend, zero hardcoding
   const [apps, setApps] = useState<AppItem[]>([]);
   const [unorganized, setUnorganized] = useState<UnorganizedItem[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
-  const [doctorChecks, setDoctorChecks] = useState<DoctorCheckItem[]>([]);
+  const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
+  const [stacks, setStacks] = useState<StackItem[]>([]);
+  const [categories, setCategories] = useState<CategoryInfo[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [sseConnected, setSseConnected] = useState(false);
+  const [changeCount, setChangeCount] = useState(0);
 
+  // UI navigation state
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedApp, setSelectedApp] = useState<AppItem | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'library' | 'unorganized' | 'stacks' | 'services' | 'doctor'>('library');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Wizard state (Zero mock data - genuine Linux installation pipeline)
+  // Create category modal
+  const [showCreateCat, setShowCreateCat] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [createCatError, setCreateCatError] = useState<string | null>(null);
+  const [creatingCat, setCreatingCat] = useState(false);
+
+  // Doctor fix state
+  const [fixingCheck, setFixingCheck] = useState<string | null>(null);
+
+  // Stack manifest export modal
+  const [manifestModal, setManifestModal] = useState<{ open: boolean; stackName: string; toml: string } | null>(null);
+
+  // Wizard state
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
-  const [wizardSourcePath, setWizardSourcePath] = useState('fixtures/electron-like.tar.gz');
-  const [wizardCategory, setWizardCategory] = useState('ide');
-  const [wizardAppName, setWizardAppName] = useState('electron-like');
+  const [wizardSourcePath, setWizardSourcePath] = useState('');
+  const [wizardCategory, setWizardCategory] = useState('tools');
+  const [wizardAppName, setWizardAppName] = useState('');
   const [wizardAnalyzing, setWizardAnalyzing] = useState(false);
   const [wizardAnalysis, setWizardAnalysis] = useState<any>(null);
   const [wizardError, setWizardError] = useState<string | null>(null);
   const [wizardInstalling, setWizardInstalling] = useState(false);
   const [wizardInstallResult, setWizardInstallResult] = useState<any>(null);
 
-  // Terminal state
-  const [termLines, setTermLines] = useState<Array<{ type: 'cmd' | 'output' | 'success' | 'info'; text: string }>>([
-    { type: 'info', text: 'AppDepot Linux Subsystem v0.1.0 (Live Kernel & Inotify Active)' },
-    { type: 'output', text: 'Target Root: /opt/Application (mode: 2775 devtools)' },
-    { type: 'output', text: 'Zero hardcoded data: live filesystem scanning active.' },
+  // Terminal
+  const [termLines, setTermLines] = useState<Array<{ type: 'cmd' | 'output' | 'success' | 'info' | 'error'; text: string }>>([
+    { type: 'info', text: 'AppDepot Linux Desktop — Live Kernel & Inotify Active' },
+    { type: 'output', text: 'Watching: /opt/Application  /usr/local/bin  ~/.local/share/applications' },
+    { type: 'output', text: 'Type any shell command. "depot list" shows all managed apps.' },
   ]);
   const [termInput, setTermInput] = useState('');
+  const termBodyRef = useRef<HTMLDivElement>(null);
 
-  // Fetch real system state from live backend API
-  const fetchLiveSystemData = async (silent = true) => {
+  // ── Data fetching ─────────────────────────────────────────────────────────
+
+  const fetchAllData = async (silent = true) => {
     if (!silent) setIsSyncing(true);
     try {
-      const [appsRes, unorgRes, srvRes, docRes] = await Promise.all([
-        fetch('/api/apps').then(r => r.json()),
-        fetch('/api/unorganized').then(r => r.json()),
-        fetch('/api/services').then(r => r.json()),
-        fetch('/api/doctor').then(r => r.json()),
+      const [appsRes, unorgRes, srvRes, docRes, stacksRes, catRes] = await Promise.all([
+        fetch('/api/apps').then(r => r.json()).catch(() => []),
+        fetch('/api/unorganized').then(r => r.json()).catch(() => []),
+        fetch('/api/services').then(r => r.json()).catch(() => []),
+        fetch('/api/doctor').then(r => r.json()).catch(() => []),
+        fetch('/api/stacks').then(r => r.json()).catch(() => []),
+        fetch('/api/categories').then(r => r.json()).catch(() => []),
       ]);
       setApps(appsRes || []);
       setUnorganized(unorgRes || []);
       setServices(srvRes || []);
       setDoctorChecks(docRes || []);
+      setStacks(stacksRes || []);
+      setCategories(catRes || []);
+      setLastSyncTime(new Date());
     } catch (e) {
-      console.error('Error fetching live system data:', e);
+      console.error('[AppDepot] Fetch error:', e);
     } finally {
       setLoading(false);
-      if (!silent) setTimeout(() => setIsSyncing(false), 500);
+      if (!silent) setTimeout(() => setIsSyncing(false), 600);
     }
   };
 
-  // Live inotify real-time synchronization (Windows & macOS equivalent)
-  useEffect(() => {
-    fetchLiveSystemData(false);
+  // ── Live SSE + polling ────────────────────────────────────────────────────
 
-    // 1. Live SSE stream from Vite /api/events
-    let eventSource: EventSource | null = null;
+  useEffect(() => {
+    fetchAllData(false);
+
+    // SSE real-time watcher
+    let es: EventSource | null = null;
     try {
-      eventSource = new EventSource('/api/events');
-      eventSource.addEventListener('fs_change', (e: any) => {
+      es = new EventSource('/api/events');
+      es.addEventListener('connected', () => setSseConnected(true));
+      es.addEventListener('fs_change', (e: any) => {
         try {
           const payload = JSON.parse(e.data);
-          console.log('[Inotify SSE] Filesystem event detected:', payload);
-          showToast(`Filesystem updated (${payload.filename || 'change detected'})`);
-          fetchLiveSystemData(true);
-        } catch (err) {
-          fetchLiveSystemData(true);
-        }
+          setChangeCount(c => c + 1);
+          const label = payload.filename || payload.root || 'filesystem';
+          showToast(`↻ Detected change in ${label}`, 'info');
+        } catch {}
+        fetchAllData(true);
       });
-      eventSource.onerror = () => {
-        // Fallback polling keeps UI alive if SSE reconnects
-      };
+      es.onerror = () => setSseConnected(false);
     } catch (e) {
-      console.warn('SSE not supported or failed to connect:', e);
+      console.warn('[AppDepot] SSE unavailable, using polling only');
     }
 
-    // 2. Periodic heartbeat poll every 3.5 seconds
-    const interval = setInterval(() => {
-      fetchLiveSystemData(true);
-    }, 3500);
+    // Fallback periodic poll every 4 seconds
+    const poll = setInterval(() => fetchAllData(true), 4000);
 
-    // 3. Window focus sync: when user switches back to window, sync immediately
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        fetchLiveSystemData(true);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
+    // Window focus sync
+    const onFocus = () => { if (document.visibilityState === 'visible') fetchAllData(true); };
+    document.addEventListener('visibilitychange', onFocus);
 
     return () => {
-      if (eventSource) eventSource.close();
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      if (es) es.close();
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', onFocus);
     };
   }, []);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  // Auto-scroll terminal
+  useEffect(() => {
+    if (termBodyRef.current) {
+      termBodyRef.current.scrollTop = termBodyRef.current.scrollHeight;
+    }
+  }, [termLines]);
+
+  // ── UI helpers ────────────────────────────────────────────────────────────
+
+  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // Installed app categories that actually exist on disk
+  const existingCategories = categories.filter(c => c.exists);
+
   const filteredApps = apps.filter(app => {
     const matchesCat = selectedCategory === 'all' || app.category === selectedCategory;
-    const matchesSearch = app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          app.command.toLowerCase().includes(searchQuery.toLowerCase());
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = !q ||
+      app.name.toLowerCase().includes(q) ||
+      app.command.toLowerCase().includes(q) ||
+      app.category.toLowerCase().includes(q) ||
+      (app.path && app.path.toLowerCase().includes(q));
     return matchesCat && matchesSearch;
   });
 
+  const doctorPassed = doctorChecks.filter(c => c.passed).length;
+  const healthScore = doctorChecks.length > 0 ? Math.round((doctorPassed / doctorChecks.length) * 100) : 100;
+
+  // ── Terminal ──────────────────────────────────────────────────────────────
+
   const runTerminalCommand = async (cmd: string) => {
-    const cleanCmd = cmd.trim();
-    if (!cleanCmd) return;
+    const trimmed = cmd.trim();
+    if (!trimmed) return;
 
-    const newLines = [...termLines, { type: 'cmd' as const, text: cleanCmd }];
+    const lines = [...termLines, { type: 'cmd' as const, text: trimmed }];
 
-    if (cleanCmd === 'clear') {
-      setTermLines([]);
-      setTermInput('');
-      return;
-    }
+    if (trimmed === 'clear') { setTermLines([]); setTermInput(''); return; }
 
     try {
       const res = await fetch('/api/exec', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cleanCmd.startsWith('depot') ? `./bin/${cleanCmd}` : cleanCmd }),
+        body: JSON.stringify({
+          command: trimmed.startsWith('depot') ? `./bin/${trimmed}` : trimmed,
+        }),
       });
       const data = await res.json();
       if (data.output) {
         data.output.split('\n').filter(Boolean).forEach((line: string) => {
-          newLines.push({
-            type: line.includes('[✓]') || line.includes('successfully') ? 'success' : 'output',
+          lines.push({
+            type: line.includes('[✓]') || line.toLowerCase().includes('success') ? 'success'
+              : line.includes('[!]') || line.toLowerCase().includes('error') ? 'error'
+              : 'output',
             text: line,
           });
         });
       }
+      if (data.success === false && !data.output) {
+        lines.push({ type: 'error', text: data.error || 'Command failed.' });
+      }
     } catch (e) {
-      newLines.push({ type: 'output', text: `Command completed.` });
+      lines.push({ type: 'error', text: 'Network error reaching shell API.' });
     }
 
-    setTermLines(newLines);
+    setTermLines(lines);
     setTermInput('');
-    fetchLiveSystemData(true);
+    fetchAllData(true);
   };
 
-  // Launch application
+  // ── App actions ───────────────────────────────────────────────────────────
+
   const handleLaunchApp = async (app: AppItem) => {
-    showToast(`Launching ${app.name}...`);
+    showToast(`Launching ${app.name}…`, 'info');
     try {
       const res = await fetch('/api/launch', {
         method: 'POST',
@@ -248,99 +349,133 @@ export function App() {
         body: JSON.stringify({ command: app.execPath || app.command }),
       });
       const data = await res.json();
-      if (data.success) {
-        showToast(`${app.name} launched successfully (PID: ${data.pid})`);
-      } else {
-        runTerminalCommand(`${app.command} &`);
-      }
-    } catch (e) {
+      if (data.success) showToast(`${app.name} launched (PID: ${data.pid})`);
+      else runTerminalCommand(`${app.execPath || app.command} &`);
+    } catch {
       runTerminalCommand(`${app.command} &`);
     }
   };
 
-  // Open directory in native host file manager (Nautilus, Dolphin, Thunar)
   const handleOpenFolder = async (folderPath: string) => {
-    showToast(`Opening ${folderPath} in file manager...`);
-    try {
-      await fetch('/api/open-folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: folderPath }),
-      });
-    } catch (e) {
-      runTerminalCommand(`xdg-open "${folderPath}" &`);
-    }
+    await fetch('/api/open-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: folderPath }),
+    }).catch(() => runTerminalCommand(`xdg-open "${folderPath}" &`));
   };
 
-  // Adopt unorganized package
-  const adoptUnorganizedApp = async (item: UnorganizedItem) => {
-    showToast(`Adopting ${item.name} into /opt/Application/${item.suggestedCategory}...`);
+  const adoptApp = async (item: UnorganizedItem) => {
+    showToast(`Adopting ${item.name} → /opt/Application/${item.suggestedCategory}/`, 'info');
     try {
       const res = await fetch('/api/adopt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourcePath: item.path,
-          category: item.suggestedCategory,
-          appId: item.id,
-        }),
+        body: JSON.stringify({ sourcePath: item.path, category: item.suggestedCategory, appId: item.id }),
       });
       const data = await res.json();
-      if (data.success) {
-        showToast(`Linked ${item.name} into /opt/Application/${item.suggestedCategory}!`);
-        fetchLiveSystemData(false);
-      } else {
-        runTerminalCommand(`ln -sf "${item.path}" "/opt/Application/${item.suggestedCategory}/${item.id}"`);
-      }
-    } catch (e) {
-      runTerminalCommand(`ln -sf "${item.path}" "/opt/Application/${item.suggestedCategory}/${item.id}"`);
+      if (data.success) { showToast(`Linked ${item.name} into ${item.suggestedCategory}!`); fetchAllData(false); }
+      else showToast(data.error || 'Adopt failed.', 'error');
+    } catch (e: any) {
+      showToast(e.message, 'error');
     }
   };
 
-  // Service toggle
-  const toggleService = (srv: ServiceItem) => {
-    const action = srv.status === 'active' ? 'stop' : 'start';
-    showToast(`Executing systemctl ${action} ${srv.unit}...`);
-    runTerminalCommand(`systemctl ${action} ${srv.unit} || echo "Notice: Service action requested"`);
+  const handleExportStack = async (stackId: string, stackName: string) => {
+    try {
+      const res = await fetch(`/api/stacks/export?id=${encodeURIComponent(stackId)}`);
+      const data = await res.json();
+      if (data.toml) {
+        setManifestModal({ open: true, stackName, toml: data.toml });
+      } else {
+        showToast(data.error || 'Failed to export stack manifest', 'error');
+      }
+    } catch (e: any) {
+      showToast(`Export error: ${e.message}`, 'error');
+    }
   };
 
-  // Uninstall / delete app
   const deleteApp = async (app: AppItem) => {
+    if (!window.confirm(`Are you sure you want to remove ${app.name}? This will purge its files, remove ~/.local/share/applications/appdepot-${app.id}.desktop, and delete ~/.local/bin/${app.id}.`)) {
+      return;
+    }
     setSelectedApp(null);
-    showToast(`Removing ${app.name} from /opt/Application/${app.category}...`);
+    showToast(`Removing ${app.name}…`, 'info');
     try {
       const res = await fetch('/api/uninstall', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          appId: app.id,
-          category: app.category,
-          mode: app.mode,
-          appPath: app.path,
-          linkPath: app.linkPath,
-        }),
+        body: JSON.stringify({ appId: app.id, category: app.category, mode: app.mode, appPath: app.path, linkPath: app.linkPath }),
       });
       const data = await res.json();
-      if (data.success) {
-        showToast(`Removed ${app.name} and unlinked desktop entries.`);
-        fetchLiveSystemData(false);
-      } else {
-        if (app.linkPath) {
-          runTerminalCommand(`rm -f "${app.linkPath}"`);
-        } else {
-          runTerminalCommand(`rm -rf "${app.path}"`);
-        }
-      }
-    } catch (e) {
-      if (app.linkPath) {
-        runTerminalCommand(`rm -f "${app.linkPath}"`);
-      } else {
-        runTerminalCommand(`rm -rf "${app.path}"`);
-      }
+      if (data.success) { showToast(`Removed ${app.name} from system.`); fetchAllData(false); }
+      else showToast(data.error || 'Removal failed.', 'error');
+    } catch (e: any) {
+      showToast(e.message, 'error');
     }
   };
 
-  // Wizard action: Analyze source archive
+  const toggleService = (srv: ServiceItem) => {
+    const action = srv.status === 'active' ? 'stop' : 'start';
+    showToast(`systemctl ${action} ${srv.unit}`, 'info');
+    runTerminalCommand(`systemctl ${action} ${srv.unit} 2>&1 || pkexec systemctl ${action} ${srv.unit}`);
+  };
+
+  const applyDoctorFix = async (check: DoctorCheck) => {
+    if (!check.fixCmd) return;
+    setFixingCheck(check.code);
+    try {
+      const res = await fetch('/api/doctor/fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fixCmd: check.fixCmd }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✓ Fix applied for ${check.code}`);
+        termLines.push({ type: 'cmd', text: check.fixCmd });
+        termLines.push({ type: 'success', text: data.output || 'OK' });
+        setTermLines([...termLines]);
+      } else {
+        showToast(`Fix requires sudo — copy command below`, 'error');
+        runTerminalCommand(check.fixCmd);
+      }
+      fetchAllData(false);
+    } catch {
+      showToast('Fix command failed — see terminal.', 'error');
+    } finally {
+      setFixingCheck(null);
+    }
+  };
+
+  const handleCreateCategory = async () => {
+    const name = newCatName.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    if (name.length < 2) { setCreateCatError('Name must be at least 2 characters.'); return; }
+    setCreatingCat(true);
+    setCreateCatError(null);
+    try {
+      const res = await fetch('/api/categories/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Category '${name}' created at ${data.path}`);
+        setShowCreateCat(false);
+        setNewCatName('');
+        fetchAllData(false);
+      } else {
+        setCreateCatError(data.error || 'Creation failed.');
+      }
+    } catch (e: any) {
+      setCreateCatError(e.message);
+    } finally {
+      setCreatingCat(false);
+    }
+  };
+
+  // ── Wizard ────────────────────────────────────────────────────────────────
+
   const handleAnalyzeSource = async () => {
     setWizardAnalyzing(true);
     setWizardError(null);
@@ -348,28 +483,19 @@ export function App() {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceArchive: wizardSourcePath,
-          appName: wizardAppName,
-          category: wizardCategory,
-        }),
+        body: JSON.stringify({ sourceArchive: wizardSourcePath, appName: wizardAppName, category: wizardCategory }),
       });
       const data = await res.json();
-      if (!data.valid) {
-        setWizardError(data.error || 'Failed to inspect source package on host.');
-        setWizardAnalyzing(false);
-        return;
-      }
+      if (!data.valid) { setWizardError(data.error || 'Inspection failed.'); return; }
       setWizardAnalysis(data);
       setWizardStep(2);
     } catch (e: any) {
-      setWizardError(e.message || 'Heuristic analysis request failed.');
+      setWizardError(e.message);
     } finally {
       setWizardAnalyzing(false);
     }
   };
 
-  // Wizard action: Execute real installation
   const handleExecuteInstall = async () => {
     setWizardInstalling(true);
     setWizardError(null);
@@ -377,67 +503,42 @@ export function App() {
       const res = await fetch('/api/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceArchive: wizardSourcePath,
-          category: wizardCategory,
-          appName: wizardAppName,
-        }),
+        body: JSON.stringify({ sourceArchive: wizardSourcePath, category: wizardCategory, appName: wizardAppName }),
       });
       const data = await res.json();
-      if (!data.success) {
-        setWizardError(data.error || 'Installation execution failed.');
-        setWizardInstalling(false);
-        return;
-      }
+      if (!data.success) { setWizardError(data.error || 'Install failed.'); return; }
       setWizardInstallResult(data);
       setWizardStep(4);
-      fetchLiveSystemData(false);
-      showToast(`Installed ${wizardAppName} to /opt/Application/${wizardCategory}!`);
+      fetchAllData(false);
+      showToast(`Installed ${wizardAppName} → /opt/Application/${wizardCategory}/`);
     } catch (e: any) {
-      setWizardError(e.message || 'Installation execution failed.');
+      setWizardError(e.message);
     } finally {
       setWizardInstalling(false);
     }
   };
 
-  const doctorPassedCount = doctorChecks.filter(c => c.passed).length;
-  const doctorHealthScore = doctorChecks.length > 0
-    ? Math.round((doctorPassedCount / doctorChecks.length) * 100)
-    : 100;
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="app-container">
-      {/* Toast Notification */}
+
+      {/* ── Toast ──────────────────────────────────────────────────────── */}
       {toastMessage && (
-        <div style={{
-          position: 'fixed',
-          bottom: '24px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: '#232730',
-          border: '1px solid #3daee9',
-          color: '#e6e8ec',
-          padding: '10px 18px',
-          borderRadius: '8px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-          zIndex: 200,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          fontSize: '12.5px',
-          fontWeight: 500,
-        }}>
-          <CheckCircle2 size={16} color="#3dd68c" />
-          <span>{toastMessage}</span>
+        <div className={`toast toast-${toastMessage.type}`}>
+          {toastMessage.type === 'success' && <CheckCircle2 size={15} />}
+          {toastMessage.type === 'error' && <AlertTriangle size={15} />}
+          {toastMessage.type === 'info' && <Info size={15} />}
+          <span>{toastMessage.text}</span>
         </div>
       )}
 
-      {/* Top Header */}
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="header">
         <div className="brand-section">
-          <div className="logo-badge">
-            <Package size={17} />
-          </div>
+          <div className="logo-badge"><Package size={17} /></div>
           <span className="brand-title">AppDepot</span>
           <span className="brand-subtitle">Linux Desktop</span>
         </div>
@@ -446,37 +547,40 @@ export function App() {
           <Search size={14} color="#9aa3b2" />
           <input
             type="text"
-            placeholder="Search live apps, commands... (Ctrl+K)"
+            placeholder="Search apps, categories, paths… (Ctrl+K)"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={e => setSearchQuery(e.target.value)}
           />
           <span className="shortcut-chip">Ctrl+K</span>
         </div>
 
         <div className="header-actions">
-          {/* Live Inotify Watcher Indicator */}
-          <div className="live-sync-indicator" title="Live Linux Inotify Watcher (/opt/Application)">
-            <span className="live-dot pulse"></span>
-            <span className="live-text">Live Inotify Active</span>
+          {/* Live watcher indicator */}
+          <div
+            className="live-sync-indicator"
+            title={`SSE ${sseConnected ? 'connected' : 'reconnecting'} · ${changeCount} changes detected`}
+          >
+            <span className={`live-dot ${sseConnected ? 'pulse' : ''}`} />
+            <span className="live-text">{sseConnected ? 'Live' : 'Polling'}</span>
+            {changeCount > 0 && <span className="change-badge">{changeCount}</span>}
           </div>
 
           <button
             className="sm-btn"
-            title="Force re-scan host filesystem"
-            onClick={() => fetchLiveSystemData(false)}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            title={`Last sync: ${lastSyncTime?.toLocaleTimeString() || 'never'}`}
+            onClick={() => fetchAllData(false)}
           >
             <RotateCw size={12} className={isSyncing ? 'spin-slow' : ''} />
             <span>Sync</span>
           </button>
 
           <div className="health-pill" style={{
-            background: doctorHealthScore === 100 ? 'rgba(61, 214, 140, 0.15)' : 'rgba(245, 181, 74, 0.15)',
-            color: doctorHealthScore === 100 ? '#3dd68c' : '#f5b54a',
-            borderColor: doctorHealthScore === 100 ? 'rgba(61, 214, 140, 0.3)' : 'rgba(245, 181, 74, 0.3)',
+            background: healthScore === 100 ? 'rgba(61,214,140,0.15)' : 'rgba(245,181,74,0.15)',
+            color: healthScore === 100 ? '#3dd68c' : '#f5b54a',
+            borderColor: healthScore === 100 ? 'rgba(61,214,140,0.3)' : 'rgba(245,181,74,0.3)',
           }}>
             <ShieldCheck size={14} />
-            <span>Health {doctorHealthScore}%</span>
+            <span>Health {healthScore}%</span>
           </div>
 
           <button className="primary-btn" onClick={() => {
@@ -484,6 +588,7 @@ export function App() {
             setWizardStep(1);
             setWizardError(null);
             setWizardAnalysis(null);
+            setWizardInstallResult(null);
           }}>
             <Plus size={15} />
             <span>Install Package</span>
@@ -491,197 +596,439 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Workspace */}
+      {/* ── Workspace ──────────────────────────────────────────────────── */}
       <div className="workspace">
-        {/* Navigation Sidebar */}
+
+        {/* ── Sidebar ──────────────────────────────────────────────────── */}
         <aside className="sidebar">
+          {/* Navigation */}
           <div>
             <div className="nav-section-title">Navigation</div>
-            <button
-              className={`nav-item ${activeTab === 'library' ? 'active' : ''}`}
-              onClick={() => setActiveTab('library')}
-            >
-              <div className="nav-item-left">
-                <Folder size={15} />
-                <span>Library</span>
-              </div>
-              <span className="nav-count">{apps.length}</span>
-            </button>
-            <button
-              className={`nav-item ${activeTab === 'unorganized' ? 'active' : ''}`}
-              onClick={() => setActiveTab('unorganized')}
-            >
-              <div className="nav-item-left">
-                <AlertTriangle size={15} />
-                <span>Unorganized</span>
-              </div>
-              <span className="nav-count">{unorganized.length}</span>
-            </button>
-            <button
-              className={`nav-item ${activeTab === 'stacks' ? 'active' : ''}`}
-              onClick={() => setActiveTab('stacks')}
-            >
-              <div className="nav-item-left">
-                <Layers size={15} />
-                <span>Stacks</span>
-              </div>
-              <span className="nav-count">3</span>
-            </button>
-            <button
-              className={`nav-item ${activeTab === 'services' ? 'active' : ''}`}
-              onClick={() => setActiveTab('services')}
-            >
-              <div className="nav-item-left">
-                <Server size={15} />
-                <span>Services</span>
-              </div>
-              <span className="nav-count">{services.length}</span>
-            </button>
-            <button
-              className={`nav-item ${activeTab === 'doctor' ? 'active' : ''}`}
-              onClick={() => setActiveTab('doctor')}
-            >
-              <div className="nav-item-left">
-                <Stethoscope size={15} />
-                <span>Doctor Health</span>
-              </div>
-              <span className="nav-count" style={{ color: doctorHealthScore === 100 ? '#3dd68c' : '#f5b54a' }}>
-                {doctorHealthScore === 100 ? '✓' : doctorChecks.length - doctorPassedCount}
-              </span>
-            </button>
+            {[
+              { id: 'library', label: 'Library', icon: Folder, count: apps.length },
+              { id: 'unorganized', label: 'Unorganized', icon: AlertTriangle, count: unorganized.length, warn: unorganized.length > 0 },
+              { id: 'stacks', label: 'Stacks', icon: Layers, count: stacks.length },
+              { id: 'services', label: 'Services', icon: Server, count: services.length },
+              { id: 'doctor', label: 'Doctor', icon: Stethoscope, count: doctorChecks.length - doctorPassed, warn: healthScore < 100 },
+            ].map(item => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
+                  onClick={() => setActiveTab(item.id as any)}
+                >
+                  <div className="nav-item-left">
+                    <Icon size={15} />
+                    <span>{item.label}</span>
+                  </div>
+                  <span className="nav-count" style={item.warn ? { color: '#f5b54a' } : {}}>
+                    {item.id === 'doctor' ? (healthScore === 100 ? '✓' : item.count) : item.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
+          {/* Live categories from disk */}
           <div>
-            <div className="nav-section-title">Categories</div>
-            {CATEGORIES.map(cat => {
-              const Icon = cat.icon;
-              const count = cat.id === 'all'
-                ? apps.length
-                : apps.filter(a => a.category === cat.id).length;
+            <div className="nav-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Categories</span>
+              <button
+                title="Create new category in /opt/Application"
+                onClick={() => setShowCreateCat(true)}
+                style={{ background: 'none', border: 'none', color: '#3daee9', cursor: 'pointer', padding: '2px', display: 'flex' }}
+              >
+                <FolderPlus size={13} />
+              </button>
+            </div>
 
+            {/* All Applications */}
+            <button
+              className={`nav-item ${selectedCategory === 'all' && activeTab === 'library' ? 'active' : ''}`}
+              onClick={() => { setSelectedCategory('all'); setActiveTab('library'); }}
+            >
+              <div className="nav-item-left"><Layers size={14} /><span>All Applications</span></div>
+              <span className="nav-count">{apps.length}</span>
+            </button>
+
+            {/* Real categories from disk */}
+            {existingCategories.map(cat => {
+              const Icon = getCategoryIcon(cat.id);
+              const count = apps.filter(a => a.category === cat.id).length;
               return (
                 <button
                   key={cat.id}
                   className={`nav-item ${selectedCategory === cat.id && activeTab === 'library' ? 'active' : ''}`}
-                  onClick={() => {
-                    setSelectedCategory(cat.id);
-                    setActiveTab('library');
-                  }}
+                  onClick={() => { setSelectedCategory(cat.id); setActiveTab('library'); }}
                 >
                   <div className="nav-item-left">
                     <Icon size={14} />
-                    <span>{cat.label}</span>
+                    <span>{getCategoryLabel(cat.id)}</span>
                   </div>
                   <span className="nav-count">{count}</span>
                 </button>
               );
             })}
           </div>
+
+          {/* System info footer */}
+          <div className="sidebar-footer">
+            <div style={{ fontSize: '10px', color: '#4b5563', lineHeight: 1.6 }}>
+              <div>Root: /opt/Application</div>
+              <div>{apps.length} packages · {existingCategories.length} categories</div>
+              {lastSyncTime && <div>Synced: {lastSyncTime.toLocaleTimeString()}</div>}
+            </div>
+          </div>
         </aside>
 
-        {/* Center Content Switcher */}
+        {/* ── Main Content ────────────────────────────────────────────── */}
         <main className="center-content">
-          {/* VIEW: Library */}
-          {activeTab === 'library' && (
+
+          {loading && (
+            <div style={{ textAlign: 'center', padding: '80px 20px', color: '#9aa3b2' }}>
+              <RotateCw size={32} className="spin-slow" style={{ margin: '0 auto 12px' }} />
+              <div>Scanning live filesystem…</div>
+            </div>
+          )}
+
+          {/* ── Library ─────────────────────────────────────────────── */}
+          {!loading && activeTab === 'library' && (
             <>
               <div className="view-header">
                 <div className="view-title-wrap">
                   <h1 className="view-title">
-                    {CATEGORIES.find(c => c.id === selectedCategory)?.label || 'Applications'}
+                    {selectedCategory === 'all' ? 'All Applications' : getCategoryLabel(selectedCategory)}
                   </h1>
-                  <span className="view-subtitle">{filteredApps.length} live packages discovered in /opt/Application</span>
+                  <span className="view-subtitle">
+                    {filteredApps.length} live package{filteredApps.length !== 1 ? 's' : ''} in /opt/Application
+                    {selectedCategory !== 'all' && `/${selectedCategory}`}
+                  </span>
                 </div>
                 <div className="action-btn-group">
-                  <button
-                    className="sm-btn"
-                    onClick={() => {
-                      fetchLiveSystemData(false);
-                      runTerminalCommand('depot list');
-                    }}
-                  >
-                    <RotateCw size={12} style={{ marginRight: '4px' }} className={isSyncing ? 'spin-slow' : ''} />
-                    Rescan Host
+                  <button className="sm-btn" onClick={() => fetchAllData(false)}>
+                    <RotateCw size={12} />
+                    <span>Refresh</span>
                   </button>
-                  <button
-                    className="sm-btn"
-                    onClick={() => setActiveTab('doctor')}
-                  >
-                    Run Health Audit
+                  <button className="sm-btn" onClick={() => handleOpenFolder('/opt/Application')}>
+                    <Folder size={12} />
+                    <span>Open Root</span>
                   </button>
                 </div>
               </div>
 
-              {loading ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: '#9aa3b2' }}>
-                  Scanning /opt/Application on host machine...
+              {filteredApps.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '80px 20px', color: '#9aa3b2' }}>
+                  <Package size={48} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
+                  <h3 style={{ color: '#e6e8ec', marginBottom: '8px' }}>
+                    {searchQuery ? `No apps matching "${searchQuery}"` : 'No apps installed yet'}
+                  </h3>
+                  <p style={{ fontSize: '12px', marginBottom: '16px' }}>
+                    {searchQuery
+                      ? 'Clear the search or try a different term.'
+                      : `Drop a folder or archive into /opt/Application/${selectedCategory === 'all' ? '<category>' : selectedCategory}/ and it appears here instantly.`}
+                  </p>
+                  {!searchQuery && (
+                    <button className="primary-btn" onClick={() => { setIsWizardOpen(true); setWizardStep(1); }}>
+                      <Plus size={14} /><span>Install First Package</span>
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="app-grid">
-                  {filteredApps.map(app => (
-                    <div
-                      key={app.id}
-                      className={`app-card ${selectedApp?.id === app.id ? 'selected' : ''}`}
-                      onClick={() => setSelectedApp(app)}
-                    >
-                      <div className="card-top">
-                        <div className="app-icon-mask">
-                          {app.name.charAt(0)}
-                        </div>
-                        <div className="app-meta">
-                          <div className="app-name">{app.name}</div>
-                          <div className="app-version">
-                            {app.mode === 'linked' ? 'Linked folder' : 'Managed tree'} · {app.sizeFormatted || 'Installed'}
+                  {filteredApps.map(app => {
+                    const Icon = getCategoryIcon(app.category);
+                    return (
+                      <div
+                        key={app.id}
+                        className={`app-card ${app.status === 'broken' ? 'app-broken' : ''}`}
+                        onClick={() => setSelectedApp(app)}
+                      >
+                        <div className="card-top">
+                          <div className="app-icon-mask">
+                            <Icon size={18} />
                           </div>
-                          <div className="badges-row">
+                          <div className="card-meta">
                             <span className={`mode-badge ${app.mode}`}>{app.mode}</span>
                             {app.hasSandboxFix && (
                               <span className="mode-badge" style={{ background: 'rgba(61,214,140,0.15)', color: '#3dd68c' }}>
-                                Sandbox 4755
+                                sandbox ✓
                               </span>
                             )}
                           </div>
                         </div>
-                      </div>
 
-                      <div className="path-preview mono" title={app.path}>
-                        {app.path}
-                      </div>
+                        <div className="card-name">{app.name}</div>
+                        <div className="card-cmd">{app.command}</div>
 
-                      <div className="card-footer">
-                        <div className="status-indicator">
-                          <div className="status-dot"></div>
-                          <span>{app.artifactsCount} artifacts tracked</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                          <span className="version-tag">{app.version}</span>
+                          <span className="version-tag" style={{ background: 'rgba(59,130,246,0.12)', color: '#60a5fa' }}>
+                            {app.sizeFormatted || '…'}
+                          </span>
                         </div>
-                        <div className="action-btn-group">
+
+                        <div className="card-footer">
+                          <div className="status-indicator">
+                            <div className="status-dot" style={{
+                              background: app.status === 'healthy' ? '#3dd68c' : app.status === 'warning' ? '#f5b54a' : '#ef4444'
+                            }} />
+                            <span>{app.status}</span>
+                          </div>
+                          <div className="action-btn-group">
+                            <button className="sm-btn" title="Launch" onClick={e => { e.stopPropagation(); handleLaunchApp(app); }}>
+                              <Play size={11} />
+                            </button>
+                            <button className="sm-btn" title="Open folder" onClick={e => { e.stopPropagation(); handleOpenFolder(app.path); }}>
+                              <Folder size={11} />
+                            </button>
+                            <button className="sm-btn" title="Details" onClick={e => { e.stopPropagation(); setSelectedApp(app); }}>
+                              <Info size={11} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Unorganized ──────────────────────────────────────────── */}
+          {!loading && activeTab === 'unorganized' && (
+            <div>
+              <div className="view-header">
+                <div>
+                  <h1 className="view-title">Unorganized Packages</h1>
+                  <span className="view-subtitle">
+                    Real packages on /opt and ~/Downloads not yet linked into /opt/Application
+                  </span>
+                </div>
+              </div>
+
+              {unorganized.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '80px 20px', color: '#9aa3b2' }}>
+                  <CheckCircle2 size={48} color="#3dd68c" style={{ margin: '0 auto 16px' }} />
+                  <h3>All Packages Are Organized</h3>
+                  <p style={{ fontSize: '12px', marginTop: '6px' }}>
+                    Every detected package on /opt is linked into /opt/Application.
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {unorganized.map(item => (
+                    <div key={item.id} className="unorganized-row">
+                      <div className="unorganized-left">
+                        <div className="app-icon-mask" style={{ width: '38px', height: '38px', fontSize: '15px' }}>
+                          {item.name.charAt(0)}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: '13.5px' }}>{item.name}</div>
+                          <div style={{ fontSize: '11px', color: '#9aa3b2' }}>
+                            Owner: {item.detectedOwner}
+                            <span className="mono" style={{ marginLeft: '6px' }}>{item.path}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <select
+                          className="wizard-input"
+                          defaultValue={item.suggestedCategory}
+                          style={{ minWidth: '120px', padding: '4px 8px', fontSize: '11px' }}
+                          onChange={e => { item.suggestedCategory = e.target.value; }}
+                        >
+                          {existingCategories.map(c => (
+                            <option key={c.id} value={c.id}>{getCategoryLabel(c.id)}</option>
+                          ))}
+                        </select>
+                        <button className="primary-btn" onClick={() => adoptApp(item)}>
+                          <span>Adopt</span>
+                          <ArrowRight size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Stacks ───────────────────────────────────────────────── */}
+          {!loading && activeTab === 'stacks' && (
+            <div>
+              <div className="view-header">
+                <div>
+                  <h1 className="view-title">Developer Tool Stacks</h1>
+                  <span className="view-subtitle">
+                    Dynamically detected from your actual /opt/Application installs — no hardcoding
+                  </span>
+                </div>
+                <button className="sm-btn" onClick={() => fetchAllData(false)}>
+                  <RotateCw size={12} /><span>Refresh</span>
+                </button>
+              </div>
+
+              {stacks.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '80px 20px', color: '#9aa3b2' }}>
+                  <Layers size={48} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
+                  <h3>No Stacks Detected Yet</h3>
+                  <p style={{ fontSize: '12px', marginTop: '6px' }}>
+                    Install apps like Flutter, MySQL, Node, or any IDE —
+                    stacks auto-form based on what's in /opt/Application.
+                  </p>
+                </div>
+              ) : (
+                <div className="stacks-grid">
+                  {stacks.map(stack => (
+                    <div key={stack.id} className="stack-card">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <div style={{ fontWeight: 700, fontSize: '15px' }}>{stack.name}</div>
+                        <span className="health-pill" style={{
+                          color: stack.status === 'complete' ? '#3dd68c' : '#f5b54a',
+                          background: stack.status === 'complete' ? 'rgba(61,214,140,0.15)' : 'rgba(245,181,74,0.15)',
+                          borderColor: stack.status === 'complete' ? 'rgba(61,214,140,0.3)' : 'rgba(245,181,74,0.3)',
+                        }}>
+                          {stack.status === 'complete' ? 'Complete' : 'Partial'}
+                        </span>
+                      </div>
+
+                      <p style={{ fontSize: '12px', color: '#9aa3b2', marginBottom: '10px' }}>
+                        {stack.description}
+                      </p>
+
+                      <div className="stack-chips-wrap">
+                        {stack.members.map(m => (
+                          <span key={m.appId} className="stack-chip" style={{
+                            borderColor: m.status === 'healthy' ? 'rgba(61,214,140,0.3)' : 'rgba(245,181,74,0.3)',
+                          }}>
+                            {m.status === 'healthy' ? '✓' : '⚠'} {m.name}
+                            <span style={{ opacity: 0.5, fontSize: '10px', marginLeft: '4px' }}>
+                              {m.path.replace('/opt/Application/', '')}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', marginTop: 'auto', paddingTop: '10px' }}>
+                        {stack.members[0] && (
                           <button
-                            className="sm-btn"
-                            title="Launch application"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleLaunchApp(app);
-                            }}
+                            className="primary-btn"
+                            style={{ flex: 1 }}
+                            onClick={() => runTerminalCommand(`ls "${stack.members[0].path}"`)}
                           >
-                            <Play size={11} />
+                            <Activity size={12} />
+                            Inspect
+                          </button>
+                        )}
+                        <button
+                          className="sm-btn"
+                          onClick={() => handleExportStack(stack.id, stack.name)}
+                          title="Export AppDepot Stack Manifest (.toml)"
+                        >
+                          <FileText size={12} />
+                          Export
+                        </button>
+                        <button
+                          className="sm-btn"
+                          onClick={() => handleOpenFolder(stack.members[0]?.path || '/opt/Application')}
+                          title="Open Directory"
+                        >
+                          <Folder size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Services ─────────────────────────────────────────────── */}
+          {!loading && activeTab === 'services' && (
+            <div>
+              <div className="view-header">
+                <div>
+                  <h1 className="view-title">Live System Services</h1>
+                  <span className="view-subtitle">
+                    Real systemd units auto-discovered from apps in /opt/Application — memory is live from systemctl
+                  </span>
+                </div>
+                <button className="sm-btn" onClick={() => fetchAllData(false)}>
+                  <RotateCw size={12} /><span>Refresh</span>
+                </button>
+              </div>
+
+              {services.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '80px 20px', color: '#9aa3b2' }}>
+                  <Server size={48} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
+                  <h3>No Services Detected</h3>
+                  <p style={{ fontSize: '12px', marginTop: '6px' }}>
+                    Install MySQL, PostgreSQL, Redis, Docker or similar — their systemd services appear here automatically.
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {services.map(srv => (
+                    <div key={srv.id} className="service-row">
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 600, fontSize: '14px' }}>{srv.name}</span>
+                          <span className="status-dot" style={{
+                            background: srv.status === 'active' ? '#3dd68c' : '#6b7280',
+                            width: '7px', height: '7px', borderRadius: '50%', display: 'inline-block'
+                          }} />
+                          <span style={{
+                            fontSize: '11px',
+                            color: srv.status === 'active' ? '#3dd68c' : '#6b7280',
+                            textTransform: 'capitalize',
+                          }}>
+                            {srv.status}
+                          </span>
+                          {srv.autostart && (
+                            <span className="mode-badge" style={{ fontSize: '10px', background: 'rgba(59,130,246,0.12)', color: '#60a5fa' }}>
+                              autostart
+                            </span>
+                          )}
+                        </div>
+                        <div className="service-unit mono" style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                          {srv.unit}
+                          {srv.port > 0 && ` · Port :${srv.port}`}
+                          {srv.description && ` · ${srv.description}`}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        {srv.status === 'active' && srv.memoryMb > 0 && (
+                          <div style={{ fontSize: '11.5px', color: '#9aa3b2', textAlign: 'right' }}>
+                            <div style={{ fontWeight: 600, color: '#e6e8ec' }}>{srv.memoryFormatted || `${srv.memoryMb} MB`}</div>
+                            <div style={{ fontSize: '10px' }}>RSS Memory</div>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            className={srv.status === 'active' ? 'sm-btn' : 'primary-btn'}
+                            style={{ minWidth: '76px' }}
+                            onClick={() => toggleService(srv)}
+                          >
+                            <Power size={12} />
+                            <span>{srv.status === 'active' ? 'Stop' : 'Start'}</span>
                           </button>
                           <button
                             className="sm-btn"
-                            title="Open folder in File Manager"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenFolder(app.path);
-                            }}
+                            title="View service logs"
+                            onClick={() => runTerminalCommand(`journalctl -u ${srv.unit} --no-pager -n 30`)}
                           >
-                            <Folder size={11} />
+                            <FileText size={12} />
                           </button>
                           <button
                             className="sm-btn"
-                            title="Inspect artifacts ledger"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedApp(app);
-                            }}
+                            title="Service status"
+                            onClick={() => runTerminalCommand(`systemctl status ${srv.unit} --no-pager`)}
                           >
-                            <Info size={11} />
+                            <Info size={12} />
                           </button>
                         </div>
                       </div>
@@ -689,205 +1036,109 @@ export function App() {
                   ))}
                 </div>
               )}
-            </>
-          )}
-
-          {/* VIEW: Unorganized */}
-          {activeTab === 'unorganized' && (
-            <div>
-              <div className="view-header">
-                <div>
-                  <h1 className="view-title">Unorganized Packages on Host</h1>
-                  <span className="view-subtitle">Real packages found on /opt and Downloads not yet linked into /opt/Application</span>
-                </div>
-              </div>
-
-              {unorganized.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#9aa3b2' }}>
-                  <CheckCircle2 size={48} color="#3dd68c" style={{ margin: '0 auto 12px' }} />
-                  <h3>All Packages Are Organized!</h3>
-                  <p style={{ fontSize: '12px', marginTop: '6px' }}>Every external package on your system is categorized in /opt/Application.</p>
-                </div>
-              ) : (
-                unorganized.map(item => (
-                  <div key={item.id} className="unorganized-row">
-                    <div className="unorganized-left">
-                      <div className="app-icon-mask" style={{ width: '38px', height: '38px' }}>
-                        {item.name.charAt(0)}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: '13.5px' }}>{item.name}</div>
-                        <div style={{ fontSize: '11px', color: '#9aa3b2' }}>Owner: {item.detectedOwner} · <span className="mono">{item.path}</span></div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span className="mode-badge" style={{ background: '#242832', color: '#9aa3b2' }}>
-                        Target: {item.suggestedCategory}
-                      </span>
-                      <button className="primary-btn" onClick={() => adoptUnorganizedApp(item)}>
-                        <span>Link into {item.suggestedCategory}</span>
-                        <ArrowRight size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
             </div>
           )}
 
-          {/* VIEW: Stacks */}
-          {activeTab === 'stacks' && (
-            <div>
-              <div className="view-header">
-                <div>
-                  <h1 className="view-title">Developer Tool Stacks</h1>
-                  <span className="view-subtitle">Manage multi-app environments and database toolchains</span>
-                </div>
-              </div>
-
-              <div className="stacks-grid">
-                <div className="stack-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontWeight: 700, fontSize: '15px' }}>Flutter Mobile Stack</div>
-                    <span className="health-pill">Installed</span>
-                  </div>
-                  <p style={{ fontSize: '12px', color: '#9aa3b2' }}>
-                    SDK located at <span className="mono">/opt/Application/sdk/flutter</span>.
-                  </p>
-                  <div className="stack-chips-wrap">
-                    <span className="stack-chip">✓ Flutter SDK (/opt/Application/sdk/flutter)</span>
-                    <span className="stack-chip">✓ Chrome (/opt/Application/browsers/chrome)</span>
-                    <span className="stack-chip">✓ Antigravity (/opt/Application/ide/antigravity)</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
-                    <button className="primary-btn" style={{ flex: 1 }} onClick={() => runTerminalCommand('flutter doctor')}>
-                      Run Flutter Doctor
-                    </button>
-                  </div>
-                </div>
-
-                <div className="stack-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontWeight: 700, fontSize: '15px' }}>Database Stack</div>
-                    <span className="health-pill" style={{ color: '#3dd68c', background: 'rgba(61,214,140,0.15)' }}>Active</span>
-                  </div>
-                  <p style={{ fontSize: '12px', color: '#9aa3b2' }}>
-                    MySQL and PostgreSQL database clusters managed under <span className="mono">/opt/Application/databases/</span>.
-                  </p>
-                  <div className="stack-chips-wrap">
-                    <span className="stack-chip">✓ MySQL (/opt/Application/databases/mysql)</span>
-                    <span className="stack-chip">✓ PostgreSQL Binaries (/usr/lib/postgresql)</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
-                    <button className="primary-btn" style={{ flex: 1 }} onClick={() => runTerminalCommand('systemctl status mysql --no-pager')}>
-                      Check Service Status
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* VIEW: Services */}
-          {activeTab === 'services' && (
-            <div>
-              <div className="view-header">
-                <div>
-                  <h1 className="view-title">Live System Services</h1>
-                  <span className="view-subtitle">Real systemd units running on this Kubuntu workstation</span>
-                </div>
-              </div>
-
-              {services.map(srv => (
-                <div key={srv.id} className="service-row">
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontWeight: 600, fontSize: '14px' }}>{srv.name}</span>
-                      <span className={`status-dot`} style={{ background: srv.status === 'active' ? '#3dd68c' : '#6b7280' }}></span>
-                      <span style={{ fontSize: '11px', color: srv.status === 'active' ? '#3dd68c' : '#6b7280', textTransform: 'capitalize' }}>
-                        {srv.status}
-                      </span>
-                    </div>
-                    <div className="service-unit mono">{srv.unit} · Port {srv.port}</div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <div className="service-metrics">
-                      <span>Memory: <strong>{srv.memoryMb} MB</strong></span>
-                    </div>
-                    <button
-                      className={srv.status === 'active' ? 'sm-btn' : 'primary-btn'}
-                      style={{ minWidth: '90px' }}
-                      onClick={() => toggleService(srv)}
-                    >
-                      <Power size={12} />
-                      <span>{srv.status === 'active' ? 'Stop' : 'Start'}</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* VIEW: Doctor */}
-          {activeTab === 'doctor' && (
+          {/* ── Doctor ───────────────────────────────────────────────── */}
+          {!loading && activeTab === 'doctor' && (
             <div>
               <div className="doctor-hero">
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <ShieldCheck size={24} color={doctorHealthScore === 100 ? '#3dd68c' : '#f5b54a'} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <ShieldCheck size={24} color={healthScore === 100 ? '#3dd68c' : '#f5b54a'} />
                     <h2 style={{ fontSize: '18px', fontWeight: 700 }}>
-                      Live Machine Diagnostic Score: {doctorHealthScore}%
+                      System Health: {healthScore}% — {doctorPassed}/{doctorChecks.length} checks passed
                     </h2>
                   </div>
                   <p style={{ fontSize: '12px', color: '#9aa3b2', marginTop: '4px' }}>
-                    Evaluating real POSIX permissions on /opt/Application, /usr/local/bin symlinks, and setuid sandbox helpers.
+                    Live POSIX audit: /opt/Application permissions, PATH symlinks, devtools group,
+                    desktop entries, setuid sandbox — all scanned in real time.
                   </p>
                 </div>
-                <button className="primary-btn" onClick={() => runTerminalCommand('depot doctor')}>
-                  <RotateCw size={14} />
-                  <span>Rescan System</span>
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="sm-btn" onClick={() => runTerminalCommand('id && groups')}>
+                    <Info size={13} /><span>Show Groups</span>
+                  </button>
+                  <button className="primary-btn" onClick={() => fetchAllData(false)}>
+                    <RotateCw size={14} /><span>Rescan</span>
+                  </button>
+                </div>
               </div>
 
-              {doctorChecks.map(check => (
-                <div key={check.code} className="doctor-check-row">
-                  <div className="doctor-check-left">
-                    {check.passed ? (
-                      <CheckCircle2 size={16} color="#3dd68c" style={{ marginTop: '2px' }} />
-                    ) : (
-                      <AlertTriangle size={16} color="#f5b54a" style={{ marginTop: '2px' }} />
-                    )}
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{check.title}</div>
-                      <div style={{ fontSize: '11px', color: check.passed ? '#9aa3b2' : '#f5b54a' }}>
-                        {check.detail}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {doctorChecks.map(check => (
+                  <div key={check.code} className="doctor-check-row">
+                    <div className="doctor-check-left">
+                      {check.passed
+                        ? <CheckCircle2 size={16} color="#3dd68c" style={{ marginTop: '2px', flexShrink: 0 }} />
+                        : <AlertTriangle size={16} color="#f5b54a" style={{ marginTop: '2px', flexShrink: 0 }} />
+                      }
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{check.title}</div>
+                        <div style={{ fontSize: '11px', color: check.passed ? '#9aa3b2' : '#f5b54a', marginTop: '2px' }}>
+                          {check.detail}
+                        </div>
+                        {!check.passed && check.fixCmd && (
+                          <div className="fix-cmd-preview mono">$ {check.fixCmd}</div>
+                        )}
                       </div>
                     </div>
+
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                      <span className="health-pill" style={{
+                        color: check.passed ? '#3dd68c' : '#f5b54a',
+                        background: check.passed ? 'rgba(61,214,140,0.12)' : 'rgba(245,181,74,0.12)',
+                        borderColor: check.passed ? 'rgba(61,214,140,0.25)' : 'rgba(245,181,74,0.25)',
+                      }}>
+                        {check.passed ? 'Passed' : 'Action Needed'}
+                      </span>
+
+                      {!check.passed && check.fixCmd && (
+                        <button
+                          className="primary-btn"
+                          style={{ fontSize: '11px', padding: '4px 10px' }}
+                          disabled={fixingCheck === check.code}
+                          onClick={() => applyDoctorFix(check)}
+                        >
+                          {fixingCheck === check.code ? (
+                            <><RotateCw size={11} className="spin-slow" /><span>Fixing…</span></>
+                          ) : (
+                            <><Zap size={11} /><span>Auto-Fix</span></>
+                          )}
+                        </button>
+                      )}
+
+                      {!check.passed && check.fixCmd && (
+                        <button
+                          className="sm-btn"
+                          title="Copy fix command"
+                          onClick={() => {
+                            navigator.clipboard.writeText(check.fixCmd!);
+                            showToast('Fix command copied to clipboard');
+                          }}
+                        >
+                          <Copy size={11} />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <span className="health-pill" style={{
-                    color: check.passed ? '#3dd68c' : '#f5b54a',
-                    background: check.passed ? 'rgba(61,214,140,0.12)' : 'rgba(245,181,74,0.12)'
-                  }}>
-                    {check.passed ? 'Passed' : 'Needs Setup'}
-                  </span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </main>
 
-        {/* Right Docked Live Terminal */}
+        {/* ── Terminal ─────────────────────────────────────────────────── */}
         <aside className="docked-terminal">
           <div className="terminal-header">
             <div className="terminal-tabs">
               <div className="terminal-tab active">
-                <TermIcon size={12} />
-                <span>depot shell</span>
+                <TermIcon size={12} /><span>depot shell</span>
               </div>
             </div>
-            <div style={{ color: '#6b7280', fontSize: '11px' }}>bash (Live)</div>
+            <div style={{ color: '#6b7280', fontSize: '11px' }}>
+              {sseConnected ? '● SSE Live' : '○ Polling'}
+            </div>
           </div>
 
           <div className="teach-mode-banner">
@@ -895,12 +1146,12 @@ export function App() {
             <span><strong>Live Shell:</strong> Commands run on your real Linux environment.</span>
           </div>
 
-          <div className="terminal-body">
+          <div className="terminal-body" ref={termBodyRef}>
             {termLines.map((line, idx) => (
               <div key={idx} className={`terminal-line term-${line.type}`}>
                 {line.type === 'cmd' ? (
                   <>
-                    <span className="prompt">besu@kubuntu:~$ </span>
+                    <span className="prompt">$ </span>
                     <span className="term-cmd">{line.text}</span>
                   </>
                 ) : (
@@ -910,39 +1161,30 @@ export function App() {
             ))}
 
             <div className="terminal-input-row">
-              <span className="prompt">besu@kubuntu:~$ </span>
+              <span className="prompt">$ </span>
               <input
                 type="text"
                 value={termInput}
-                placeholder="type command (e.g. depot list, depot doctor)..."
-                onChange={(e) => setTermInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    runTerminalCommand(termInput);
-                  }
-                }}
+                placeholder="depot list | depot doctor | ls /opt/Application"
+                onChange={e => setTermInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') runTerminalCommand(termInput); }}
               />
             </div>
           </div>
 
           <div className="terminal-quick-actions">
-            <button className="quick-chip" onClick={() => runTerminalCommand('depot list')}>
-              depot list
-            </button>
-            <button className="quick-chip" onClick={() => runTerminalCommand('depot doctor')}>
-              depot doctor
-            </button>
-            <button className="quick-chip" onClick={() => runTerminalCommand('depot info antigravity')}>
-              depot info antigravity
-            </button>
-            <button className="quick-chip" onClick={() => runTerminalCommand('clear')}>
-              clear
-            </button>
+            <button className="quick-chip" onClick={() => runTerminalCommand('depot list')}>depot list</button>
+            <button className="quick-chip" onClick={() => runTerminalCommand('depot doctor')}>depot doctor</button>
+            <button className="quick-chip" onClick={() => runTerminalCommand('depot doctor --fix')}>doctor --fix</button>
+            <button className="quick-chip" onClick={() => runTerminalCommand('depot env show')}>env show</button>
+            <button className="quick-chip" onClick={() => runTerminalCommand('df -h /opt/Application')}>disk usage</button>
+            <button className="quick-chip" onClick={() => runTerminalCommand('id && groups')}>id & groups</button>
+            <button className="quick-chip" onClick={() => setTermLines([])}>clear</button>
           </div>
         </aside>
       </div>
 
-      {/* App Detail Inspector Drawer */}
+      {/* ── App Detail Drawer ────────────────────────────────────────────── */}
       {selectedApp && (
         <div className="detail-drawer">
           <div className="drawer-header">
@@ -952,7 +1194,9 @@ export function App() {
               </div>
               <div>
                 <div style={{ fontWeight: 700, fontSize: '14px' }}>{selectedApp.name}</div>
-                <div style={{ fontSize: '11px', color: '#9aa3b2' }}>{selectedApp.mode} · {selectedApp.command}</div>
+                <div style={{ fontSize: '11px', color: '#9aa3b2' }}>
+                  {selectedApp.mode} · {selectedApp.category} · {selectedApp.version}
+                </div>
               </div>
             </div>
             <button onClick={() => setSelectedApp(null)} style={{ color: '#9aa3b2' }}>
@@ -963,12 +1207,12 @@ export function App() {
           <div className="drawer-body">
             <div>
               <div className="drawer-section-title">Ownership Mode</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <span className={`mode-badge ${selectedApp.mode}`}>{selectedApp.mode}</span>
                 <span style={{ fontSize: '11.5px', color: '#9aa3b2' }}>
-                  {selectedApp.mode === 'managed' && 'AppDepot manages files directly under /opt/Application.'}
-                  {selectedApp.mode === 'linked' && 'Physical files stay in their original location. Linked via symlink.'}
-                  {selectedApp.mode === 'adopted' && 'System binary or service recorded in registry.'}
+                  {selectedApp.mode === 'managed' && 'AppDepot owns files directly under /opt/Application.'}
+                  {selectedApp.mode === 'linked' && 'Physical files at original location, symlinked here.'}
+                  {selectedApp.mode === 'adopted' && 'System-level package tracked in AppDepot registry.'}
                 </span>
               </div>
             </div>
@@ -977,22 +1221,19 @@ export function App() {
               <div className="drawer-section-title">Disk Usage</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
                 <HardDrive size={14} color="#3daee9" />
-                <span>Real storage: <strong>{selectedApp.sizeFormatted || 'Calculated'}</strong></span>
+                <span>Real storage: <strong>{selectedApp.sizeFormatted || 'Calculating…'}</strong></span>
               </div>
             </div>
 
             <div>
               <div className="drawer-section-title">Physical Target Path</div>
               <div className="path-preview mono" style={{ fontSize: '11.5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>{selectedApp.path}</span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button title="Open in File Manager" onClick={() => handleOpenFolder(selectedApp.path)}>
+                <span style={{ wordBreak: 'break-all' }}>{selectedApp.path}</span>
+                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                  <button title="Open in file manager" onClick={() => handleOpenFolder(selectedApp.path)}>
                     <ExternalLink size={12} color="#9aa3b2" />
                   </button>
-                  <button title="Copy path" onClick={() => {
-                    navigator.clipboard.writeText(selectedApp.path);
-                    showToast('Path copied to clipboard');
-                  }}>
+                  <button title="Copy path" onClick={() => { navigator.clipboard.writeText(selectedApp.path); showToast('Path copied'); }}>
                     <Copy size={12} color="#9aa3b2" />
                   </button>
                 </div>
@@ -1001,10 +1242,8 @@ export function App() {
 
             {selectedApp.linkPath && (
               <div>
-                <div className="drawer-section-title">Categorized Symlink In /opt/Application</div>
-                <div className="path-preview mono" style={{ fontSize: '11.5px' }}>
-                  {selectedApp.linkPath}
-                </div>
+                <div className="drawer-section-title">Symlink in /opt/Application</div>
+                <div className="path-preview mono" style={{ fontSize: '11.5px' }}>{selectedApp.linkPath}</div>
               </div>
             )}
 
@@ -1012,20 +1251,19 @@ export function App() {
               <div className="drawer-section-title">Live Artifacts Ledger</div>
               <table className="ledger-table">
                 <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>Path on Host Machine</th>
-                  </tr>
+                  <tr><th>Type</th><th>Path on Host</th></tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td><code>folder/link</code></td>
+                    <td><code>folder</code></td>
                     <td className="mono">{selectedApp.linkPath || selectedApp.path}</td>
                   </tr>
-                  <tr>
-                    <td><code>executable</code></td>
-                    <td className="mono">{selectedApp.execPath || selectedApp.command}</td>
-                  </tr>
+                  {selectedApp.execPath && (
+                    <tr>
+                      <td><code>executable</code></td>
+                      <td className="mono">{selectedApp.execPath}</td>
+                    </tr>
+                  )}
                   <tr>
                     <td><code>command</code></td>
                     <td className="mono">/usr/local/bin/{selectedApp.command}</td>
@@ -1048,131 +1286,133 @@ export function App() {
 
             <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  className="primary-btn"
-                  style={{ flex: 1, justifyContent: 'center' }}
-                  onClick={() => handleLaunchApp(selectedApp)}
-                >
-                  <Play size={14} />
-                  <span>Launch App</span>
+                <button className="primary-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => handleLaunchApp(selectedApp)}>
+                  <Play size={14} /><span>Launch App</span>
                 </button>
-
-                <button
-                  className="sm-btn"
-                  style={{ justifyContent: 'center', padding: '0 14px' }}
-                  title="Open folder in File Manager"
-                  onClick={() => handleOpenFolder(selectedApp.path)}
-                >
+                <button className="sm-btn" style={{ justifyContent: 'center', padding: '0 14px' }} onClick={() => handleOpenFolder(selectedApp.path)}>
                   <Folder size={14} />
                 </button>
               </div>
-
               <button
                 className="sm-btn"
                 style={{ justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '6px', color: '#ff6b6b' }}
                 onClick={() => deleteApp(selectedApp)}
               >
-                <Trash2 size={12} />
-                <span>Remove From System</span>
+                <Trash2 size={12} /><span>Remove From System</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Real Live Package Install Wizard Modal */}
-      {isWizardOpen && (
+      {/* ── Create Category Modal ────────────────────────────────────────── */}
+      {showCreateCat && (
         <div className="modal-overlay">
-          <div className="modal-card">
+          <div className="modal-card" style={{ maxWidth: '420px' }}>
             <div className="modal-header">
-              <div className="modal-title">Install Package into /opt/Application</div>
-              <button onClick={() => setIsWizardOpen(false)} style={{ color: '#9aa3b2' }}>
+              <div className="modal-title">
+                <FolderPlus size={16} style={{ marginRight: '8px' }} />
+                Create Category Directory
+              </div>
+              <button onClick={() => { setShowCreateCat(false); setNewCatName(''); setCreateCatError(null); }}
+                style={{ color: '#9aa3b2' }}>
                 <X size={18} />
               </button>
             </div>
 
             <div className="modal-body">
-              <div className="stepper">
-                <div className={`step-item ${wizardStep >= 1 ? 'active' : ''}`}>
-                  <div className="step-circle">1</div>
-                  <span>Source</span>
+              <div className="wizard-form-group">
+                <label className="wizard-label">Category Name (lowercase, hyphens only)</label>
+                <input
+                  type="text"
+                  className="wizard-input mono"
+                  placeholder="e.g. design, security, cloud"
+                  value={newCatName}
+                  onChange={e => setNewCatName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
+                  onKeyDown={e => { if (e.key === 'Enter') handleCreateCategory(); }}
+                  autoFocus
+                />
+              </div>
+
+              <div style={{ background: '#14161a', padding: '10px 12px', borderRadius: '6px', fontSize: '11.5px' }}>
+                <div style={{ color: '#9aa3b2' }}>Will create:</div>
+                <div className="mono" style={{ color: '#3daee9', marginTop: '4px' }}>
+                  /opt/Application/{newCatName || '<name>'}
                 </div>
-                <div className={`step-item ${wizardStep >= 2 ? 'active' : ''}`}>
-                  <div className="step-circle">2</div>
-                  <span>Analysis</span>
-                </div>
-                <div className={`step-item ${wizardStep >= 3 ? 'active' : ''}`}>
-                  <div className="step-circle">3</div>
-                  <span>Plan</span>
-                </div>
-                <div className={`step-item ${wizardStep >= 4 ? 'active' : ''}`}>
-                  <div className="step-circle">4</div>
-                  <span>Result</span>
+                <div style={{ color: '#6b7280', marginTop: '4px', fontSize: '10.5px' }}>
+                  chmod 2775, group devtools inherited from parent
                 </div>
               </div>
 
+              {createCatError && (
+                <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid #ef4444', color: '#ef4444', padding: '8px 12px', borderRadius: '6px', fontSize: '12px' }}>
+                  {createCatError}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="sm-btn" onClick={() => { setShowCreateCat(false); setNewCatName(''); }}>
+                Cancel
+              </button>
+              <button
+                className="primary-btn"
+                onClick={handleCreateCategory}
+                disabled={creatingCat || newCatName.length < 2}
+              >
+                {creatingCat ? <><RotateCw size={12} className="spin-slow" /><span>Creating…</span></>
+                  : <><FolderPlus size={13} /><span>Create Category</span></>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Install Wizard Modal ─────────────────────────────────────────── */}
+      {isWizardOpen && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <div className="modal-header">
+              <div className="modal-title">Install Package into /opt/Application</div>
+              <button onClick={() => setIsWizardOpen(false)} style={{ color: '#9aa3b2' }}><X size={18} /></button>
+            </div>
+
+            <div className="modal-body">
+              <div className="stepper">
+                {['Source', 'Analysis', 'Plan', 'Result'].map((label, i) => (
+                  <div key={label} className={`step-item ${wizardStep >= i + 1 ? 'active' : ''}`}>
+                    <div className="step-circle">{i + 1}</div>
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </div>
+
               {wizardError && (
-                <div style={{
-                  background: 'rgba(239, 68, 68, 0.15)',
-                  border: '1px solid #ef4444',
-                  color: '#ef4444',
-                  padding: '10px 14px',
-                  borderRadius: '6px',
-                  marginBottom: '14px',
-                  fontSize: '12px'
-                }}>
+                <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid #ef4444', color: '#ef4444', padding: '10px 14px', borderRadius: '6px', marginBottom: '14px', fontSize: '12px' }}>
                   {wizardError}
                 </div>
               )}
 
-              {/* STEP 1: Select Archive or Directory */}
+              {/* Step 1: Source */}
               {wizardStep === 1 && (
                 <div>
                   <div className="wizard-form-group">
-                    <label className="wizard-label">Source Package Archive or Directory Path</label>
+                    <label className="wizard-label">Source: Archive path, package, URL, or directory</label>
                     <input
                       type="text"
                       className="wizard-input mono"
                       value={wizardSourcePath}
-                      onChange={(e) => {
+                      onChange={e => {
                         const val = e.target.value;
                         setWizardSourcePath(val);
-                        const base = val.split('/').pop()?.replace(/(\.tar\.gz|\.tgz|\.zip|\.AppImage)$/i, '') || '';
+                        const cleanVal = val.split('?')[0].split('#')[0];
+                        const base = cleanVal.split('/').pop()?.replace(/(\.tar\.gz|\.tgz|\.tar\.xz|\.txz|\.tar\.bz2|\.tbz2|\.tar\.zst|\.zip|\.deb|\.AppImage)$/i, '') || '';
                         if (base) setWizardAppName(base.toLowerCase().replace(/[^a-z0-9_-]/g, '-'));
                       }}
-                      placeholder="e.g. fixtures/electron-like.tar.gz or /opt/my-app"
+                      placeholder="/path/to/app.tar.xz  or  https://.../tool.tar.gz  or  /opt/myapp"
                     />
-                    <div className="wizard-presets">
-                      <span
-                        className={`preset-chip ${wizardSourcePath === 'fixtures/electron-like.tar.gz' ? 'selected' : ''}`}
-                        onClick={() => {
-                          setWizardSourcePath('fixtures/electron-like.tar.gz');
-                          setWizardAppName('electron-demo');
-                          setWizardCategory('ide');
-                        }}
-                      >
-                        Synthetic Electron Fixture
-                      </span>
-                      <span
-                        className={`preset-chip ${wizardSourcePath === 'fixtures/sdk-like.tar.gz' ? 'selected' : ''}`}
-                        onClick={() => {
-                          setWizardSourcePath('fixtures/sdk-like.tar.gz');
-                          setWizardAppName('sdk-tool');
-                          setWizardCategory('sdk');
-                        }}
-                      >
-                        Synthetic SDK Fixture
-                      </span>
-                      <span
-                        className={`preset-chip ${wizardSourcePath === '/opt/onlyoffice' ? 'selected' : ''}`}
-                        onClick={() => {
-                          setWizardSourcePath('/opt/onlyoffice');
-                          setWizardAppName('onlyoffice');
-                          setWizardCategory('office');
-                        }}
-                      >
-                        Existing /opt/onlyoffice
-                      </span>
+                    <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                      Supports: .tar.gz · .tar.xz · .tar.bz2 · .zip · .deb · .AppImage · Remote URLs · directory
                     </div>
                   </div>
 
@@ -1182,111 +1422,87 @@ export function App() {
                       <select
                         className="wizard-input"
                         value={wizardCategory}
-                        onChange={(e) => setWizardCategory(e.target.value)}
+                        onChange={e => setWizardCategory(e.target.value)}
                         style={{ cursor: 'pointer' }}
                       >
-                        {CATEGORIES.filter(c => c.id !== 'all').map(c => (
-                          <option key={c.id} value={c.id}>{c.label} ({c.id})</option>
+                        {existingCategories.map(c => (
+                          <option key={c.id} value={c.id}>{getCategoryLabel(c.id)} ({c.id})</option>
                         ))}
                       </select>
                     </div>
 
                     <div className="wizard-form-group">
-                      <label className="wizard-label">Application Identifier</label>
+                      <label className="wizard-label">App Identifier (ID)</label>
                       <input
                         type="text"
                         className="wizard-input mono"
                         value={wizardAppName}
-                        onChange={(e) => setWizardAppName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))}
+                        onChange={e => setWizardAppName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))}
                         placeholder="app-id"
                       />
                     </div>
                   </div>
 
-                  <div style={{ background: '#14161a', padding: '12px', borderRadius: '6px', fontSize: '11.5px', color: '#9aa3b2', marginTop: '10px' }}>
-                    <div style={{ fontWeight: 600, color: '#e6e8ec', marginBottom: '4px' }}>Target Destination:</div>
-                    <div className="mono" style={{ color: '#3daee9' }}>/opt/Application/{wizardCategory}/{wizardAppName}</div>
+                  <div style={{ background: '#14161a', padding: '12px', borderRadius: '6px', fontSize: '11.5px', marginTop: '10px' }}>
+                    <div style={{ fontWeight: 600, color: '#e6e8ec', marginBottom: '4px' }}>Installation target:</div>
+                    <div className="mono" style={{ color: '#3daee9' }}>
+                      /opt/Application/{wizardCategory}/{wizardAppName || '<id>'}
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* STEP 2: Heuristic Analysis */}
+              {/* Step 2: Analysis */}
               {wizardStep === 2 && wizardAnalysis && (
                 <div className="analysis-card">
-                  <div style={{ fontWeight: 600, color: '#3daee9', fontSize: '13px' }}>
-                    Heuristic Analysis of {wizardSourcePath}:
+                  <div style={{ fontWeight: 600, color: '#3daee9', fontSize: '13px', marginBottom: '8px' }}>
+                    Heuristic Analysis: {wizardSourcePath}
                   </div>
-                  <div className="analysis-row">
-                    <span>Resolved Host Path:</span>
-                    <span className="mono" style={{ fontSize: '11px' }}>{wizardAnalysis.resolvedPath}</span>
-                  </div>
-                  <div className="analysis-row">
-                    <span>Archive Size / Total Files:</span>
-                    <span><strong>{wizardAnalysis.sizeFormatted}</strong> ({wizardAnalysis.filesCount} entries)</span>
-                  </div>
-                  <div className="analysis-row">
-                    <span>Main Binary Detected:</span>
-                    <span>
-                      <strong className="mono" style={{ color: '#3dd68c' }}>{wizardAnalysis.mainExecutable}</strong>
-                      <span className="mode-badge" style={{ marginLeft: '6px', background: 'rgba(61,174,233,0.15)', color: '#3daee9' }}>
-                        Score: +{wizardAnalysis.execScore}
-                      </span>
-                    </span>
-                  </div>
-                  <div className="analysis-row">
-                    <span>Chromium Setuid Sandbox:</span>
-                    <span style={{ color: wizardAnalysis.hasSandbox ? '#f5b54a' : '#9aa3b2' }}>
-                      {wizardAnalysis.hasSandbox ? 'Detected (requires mode 4755)' : 'Not present'}
-                    </span>
-                  </div>
-                  <div className="analysis-row">
-                    <span>Candidate Icon:</span>
-                    <span className="mono" style={{ fontSize: '11px' }}>
-                      {wizardAnalysis.iconCandidate || 'Default category icon'}
-                    </span>
-                  </div>
-                  <div className="analysis-row">
-                    <span>Target Folder:</span>
-                    <span className="mono" style={{ color: '#3daee9' }}>{wizardAnalysis.targetDir}</span>
-                  </div>
+                  {[
+                    ['Resolved path', wizardAnalysis.resolvedPath],
+                    ['Size / files', `${wizardAnalysis.sizeFormatted} (${wizardAnalysis.filesCount} entries)`],
+                    ['Main binary', wizardAnalysis.mainExecutable + ` (score: ${wizardAnalysis.execScore})`],
+                    ['Sandbox', wizardAnalysis.hasSandbox ? '⚠ chrome-sandbox detected (requires mode 4755)' : 'Not present'],
+                    ['Icon candidate', wizardAnalysis.iconCandidate || 'Default category icon'],
+                    ['Target folder', wizardAnalysis.targetDir],
+                  ].map(([k, v]) => (
+                    <div key={k} className="analysis-row">
+                      <span>{k}:</span>
+                      <span className="mono" style={{ fontSize: '11px', wordBreak: 'break-all' }}>{v}</span>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              {/* STEP 3: Preview Planned Actions */}
+              {/* Step 3: Plan */}
               {wizardStep === 3 && wizardAnalysis && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ fontWeight: 600 }}>Planned Filesystem Operations on Host:</div>
+                  <div style={{ fontWeight: 600, marginBottom: '4px' }}>Planned filesystem operations:</div>
                   <div style={{ background: '#14161a', padding: '14px', borderRadius: '8px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ color: '#3dd68c' }}>
-                      <strong>1. Extract Payload:</strong> {wizardAnalysis.targetDir}
-                    </div>
-                    <div style={{ color: '#3daee9' }}>
-                      <strong>2. Set Executable:</strong> chmod +x {wizardAnalysis.targetDir}/{wizardAnalysis.mainExecutable}
-                    </div>
-                    <div style={{ color: '#a78bfa' }}>
-                      <strong>3. Create Desktop Entry:</strong> {wizardAnalysis.desktopDest}
-                    </div>
-                    <div style={{ color: '#60a5fa' }}>
-                      <strong>4. Create Command Symlink:</strong> {wizardAnalysis.binDest}
-                    </div>
-                    {wizardAnalysis.hasSandbox && (
-                      <div style={{ color: '#f5b54a' }}>
-                        <strong>5. Setuid Helper:</strong> chmod 4755 chrome-sandbox (via helper/polkit)
+                    {[
+                      { label: '1. Extract payload →', val: wizardAnalysis.targetDir, color: '#3dd68c' },
+                      { label: '2. chmod +x →', val: `${wizardAnalysis.targetDir}/${wizardAnalysis.mainExecutable}`, color: '#3daee9' },
+                      { label: '3. Desktop entry →', val: wizardAnalysis.desktopDest, color: '#a78bfa' },
+                      { label: '4. Command symlink →', val: wizardAnalysis.binDest, color: '#60a5fa' },
+                      ...(wizardAnalysis.hasSandbox ? [{ label: '5. Setuid sandbox →', val: 'sudo chmod 4755 chrome-sandbox', color: '#f5b54a' }] : []),
+                    ].map(({ label, val, color }) => (
+                      <div key={label} style={{ color }}>
+                        <strong>{label}</strong>{' '}
+                        <span className="mono" style={{ fontSize: '11px', opacity: 0.9 }}>{val}</span>
                       </div>
-                    )}
+                    ))}
                   </div>
                 </div>
               )}
 
-              {/* STEP 4: Execution Results */}
+              {/* Step 4: Result */}
               {wizardStep === 4 && (
                 <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                  <CheckCircle2 size={46} color="#3dd68c" style={{ margin: '0 auto 12px auto' }} />
-                  <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Installed to /opt/Application!</h3>
+                  <CheckCircle2 size={46} color="#3dd68c" style={{ margin: '0 auto 12px' }} />
+                  <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Installed Successfully!</h3>
                   <p style={{ fontSize: '12px', color: '#9aa3b2', marginTop: '6px' }}>
-                    Live inotify detected the new folder. The desktop shortcut and command symlink are ready.
+                    Live inotify detected the new package. Desktop shortcut and command symlink are active.
                   </p>
-
                   {wizardInstallResult && (
                     <div style={{ marginTop: '16px', textAlign: 'left', background: '#14161a', padding: '12px', borderRadius: '8px', fontSize: '11px' }}>
                       <div style={{ color: '#3dd68c' }}>✓ Files: {wizardInstallResult.installedPath}</div>
@@ -1301,31 +1517,21 @@ export function App() {
 
             <div className="modal-footer">
               {wizardStep > 1 && wizardStep < 4 && (
-                <button className="sm-btn" onClick={() => setWizardStep(wizardStep - 1)} disabled={wizardInstalling}>
-                  Back
-                </button>
+                <button className="sm-btn" onClick={() => setWizardStep(s => s - 1)} disabled={wizardInstalling}>Back</button>
               )}
               {wizardStep === 1 && (
-                <button
-                  className="primary-btn"
-                  onClick={handleAnalyzeSource}
-                  disabled={wizardAnalyzing || !wizardSourcePath || !wizardAppName}
-                >
-                  {wizardAnalyzing ? 'Analyzing Package...' : 'Analyze Source'} <ChevronRight size={14} />
+                <button className="primary-btn" onClick={handleAnalyzeSource} disabled={wizardAnalyzing || !wizardSourcePath || !wizardAppName}>
+                  {wizardAnalyzing ? 'Analyzing…' : 'Analyze Source'} <ChevronRight size={14} />
                 </button>
               )}
               {wizardStep === 2 && (
                 <button className="primary-btn" onClick={() => setWizardStep(3)}>
-                  Preview Planned Actions <ChevronRight size={14} />
+                  Preview Plan <ChevronRight size={14} />
                 </button>
               )}
               {wizardStep === 3 && (
-                <button
-                  className="primary-btn"
-                  onClick={handleExecuteInstall}
-                  disabled={wizardInstalling}
-                >
-                  {wizardInstalling ? 'Unpacking & Installing...' : 'Execute Plan & Install'}
+                <button className="primary-btn" onClick={handleExecuteInstall} disabled={wizardInstalling}>
+                  {wizardInstalling ? 'Installing…' : 'Execute & Install'}
                 </button>
               )}
               {wizardStep === 4 && (
@@ -1334,11 +1540,75 @@ export function App() {
                   setWizardStep(1);
                   setSelectedCategory(wizardCategory);
                   setActiveTab('library');
-                  fetchLiveSystemData(false);
+                  fetchAllData(false);
                 }}>
-                  Done & View in Library
+                  Done — View in Library
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stack Manifest Modal */}
+      {manifestModal && manifestModal.open && (
+        <div className="modal-backdrop" onClick={() => setManifestModal(null)}>
+          <div className="modal-card" style={{ maxWidth: '640px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FileText size={18} style={{ color: '#3daee9' }} />
+                <h2 style={{ fontSize: '15px', fontWeight: 600 }}>
+                  Workstation Stack Manifest: {manifestModal.stackName}
+                </h2>
+              </div>
+              <button className="icon-btn" onClick={() => setManifestModal(null)}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: '12px', color: '#9aa3b2', marginBottom: '10px' }}>
+                This TOML profile declares your software stack for version-controlled, reproducible setups across team workstations:
+              </p>
+              <textarea
+                className="mono"
+                readOnly
+                value={manifestModal.toml}
+                rows={12}
+                style={{
+                  width: '100%',
+                  background: '#14161a',
+                  border: '1px solid #2b303c',
+                  borderRadius: '6px',
+                  padding: '10px',
+                  color: '#3dd68c',
+                  fontSize: '11.5px',
+                  resize: 'vertical',
+                }}
+              />
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button
+                className="sm-btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(manifestModal.toml);
+                  showToast('Copied TOML manifest to clipboard!');
+                }}
+              >
+                <Copy size={13} /> Copy TOML
+              </button>
+              <button
+                className="primary-btn"
+                onClick={() => {
+                  const blob = new Blob([manifestModal.toml], { type: 'text/plain' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${manifestModal.stackName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-appdepot.toml`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  showToast('Downloaded stack manifest file!');
+                }}
+              >
+                <HardDrive size={13} /> Download .toml
+              </button>
             </div>
           </div>
         </div>
